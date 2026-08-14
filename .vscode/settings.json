@@ -1,0 +1,6 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "platformio": true,
+        "git clone": true
+    }
+}
