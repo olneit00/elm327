@@ -1,0 +1,253 @@
+#include <Arduino.h>
+#include <LittleFS.h>
+
+#include "display/DisplayManager.h"
+#include "hardware/Pins.h"
+#include "time/TimeProvider.h"
+#include "ui/ClockScreen.h"
+#include "ui/RadioScreen.h"
+#include "radio/RadioService.h"
+#include "radio/RadioStore.h"
+#include "net/WifiManager.h"
+#include "web/WebServer.h"
+
+namespace {
+
+// Default builds use a virtual clock that starts at 12:00:00 and advances
+// with uptime. Swap for a real RTC / SNTP source behind ITimeSource later.
+#if defined(HEADUNIT_TEST_MODE)
+// Test mode drives the hands from a fixed stamp sequence in loop(), so the
+// placement can be validated without any live clock backing.
+FixedTimeSource timeSource(TimeOfDay{12, 0, 0});
+#else
+MillisClock timeSource(TimeOfDay{12, 0, 0});
+#endif
+
+ClockScreen clockScreen;
+RadioScreen radioScreen;
+RadioService radioService;
+RadioStore radioStore;
+WifiManager wifiManager;
+WebServer webServer(radioService, wifiManager);
+
+#if defined(HEADUNIT_TEST_MODE)
+// Known stamps that place all three hands at unambiguous orientations.
+const TimeOfDay kTest[] = {
+    {12, 0, 0},   // all hands point up
+    {3, 15, 45},  // hour and minute in the first quadrant
+    {6, 30, 30},  // hands spread across the dial
+    {9, 45, 15},  // hour/min back, second in the third quadrant
+    {1, 2, 3},    // sub-degree minute/sec placement
+};
+uint32_t lastStepMs_ = 0;
+int stepIndex_ = 0;
+#endif
+
+// Radio test state
+uint32_t lastRadioTestMs = 0;
+int radioTestStep = 0;
+bool radioInitialized = false;
+bool webInitialized = false;
+uint32_t lastConfigSaveMs = 0;
+static constexpr uint32_t CONFIG_SAVE_INTERVAL_MS = 5000;
+
+// Screen switching state
+bool showRadioScreen = false;
+uint32_t lastScreenSwitchMs = 0;
+
+// RadioService callbacks for WebServer
+void onRadioStatus(const RadioStatus& status) {
+    webServer.broadcastStatus(status);
+    // Update RadioScreen if visible
+    if (showRadioScreen) {
+        radioScreen.update(status);
+    }
+}
+
+void onStationList(const RadioStation* stations, size_t count) {
+    webServer.broadcastStationList(stations, count);
+}
+
+void onScanProgress(uint8_t progress, uint8_t count, bool scanning) {
+    webServer.broadcastScanProgress(progress, count, scanning);
+}
+
+// WifiManager callback
+void onStaConnect(bool success, const IPAddress& ip) {
+    Serial.printf("[WIFI] STA callback: success=%d, ip=%s\n", success, ip.toString().c_str());
+}
+
+}  // namespace
+
+void setup() {
+  Serial.begin(115200);
+  delay(300);
+
+  Serial.println();
+  Serial.println(F("Headunit GC9A01 analog (LVGL + LovyanGFX) + Si4703 Radio"));
+
+  // Initialize LittleFS and RadioStore
+  if (!radioStore.begin()) {
+    Serial.println(F("[STORE] Failed to initialize"));
+  }
+
+  // Load persisted config
+  RadioConfig config;
+  if (radioStore.loadConfig(config)) {
+    radioService.applyConfig(config);
+    Serial.printf("[STORE] Restored: freq=%.2f MHz, vol=%d%%, muted=%s\n",
+                  config.lastFrequency / 100.0f,
+                  volumeHardwareToPercent(config.lastVolume),
+                  config.lastMuted ? "yes" : "no");
+  }
+
+  if (!DisplayManager::begin(pins::SCREEN_WIDTH, pins::SCREEN_HEIGHT)) {
+    Serial.println(F("[DISPLAY] init failed"));
+    while (true) {}
+  }
+  Serial.println(F("[DISPLAY] ready"));
+
+  // Build the face and hands in every mode so update() always has targets.
+  clockScreen.attachTimeSource(&timeSource);
+  clockScreen.create();
+
+  // Create RadioScreen
+  radioScreen.create();
+  Serial.println(F("[RADIO] Screen created"));
+
+  // Initialize Radio
+  Serial.println(F("[RADIO] Initializing Si4703..."));
+  if (radioService.begin()) {
+    radioInitialized = true;
+    Serial.println(F("[RADIO] Si4703 initialized successfully"));
+    
+    // Power ON the radio
+    radioService.powerOn();
+    Serial.println(F("[RADIO] Radio powered ON"));
+    
+    // Tune to last frequency (already set via applyConfig)
+    radioService.setVolume(config.lastVolume);
+    if (config.lastMuted) {
+      radioService.setMuted(true);
+    }
+  } else {
+    Serial.println(F("[RADIO] Si4703 initialization FAILED - check wiring"));
+  }
+
+  // Register RadioService callbacks
+  radioService.setStatusCallback(onRadioStatus);
+  radioService.setStationListCallback(onStationList);
+  radioService.setScanProgressCallback(onScanProgress);
+
+  // Initialize WiFi + WebServer
+  Serial.println(F("[WEB] Starting WiFi AP + WebServer..."));
+  if (wifiManager.begin("Opel-Radio", "")) {
+    if (webServer.begin(80)) {
+      webInitialized = true;
+      Serial.println(F("[WEB] Server ready"));
+    }
+  }
+  wifiManager.setStaConnectCallback(onStaConnect);
+
+#if defined(HEADUNIT_TEST_MODE)
+  clockScreen.setManualTime(kTest[0], true);
+  lastStepMs_ = millis();
+  stepIndex_ = 0;
+  Serial.println(F("[TEST] cycling through fixed hand stamps every 2 s"));
+#endif
+}
+
+void loop() {
+#if defined(HEADUNIT_DEMO_MODE) || defined(HEADUNIT_TEST_MODE)
+// Demo mode: screen switching, radio test sequences (enabled by default unless both are disabled)
+#define ENABLE_DEMO_SEQUENCES 1
+#else
+#define ENABLE_DEMO_SEQUENCES 0
+#endif
+
+#if defined(HEADUNIT_TEST_MODE)
+  if (millis() - lastStepMs_ > 2000) {
+    lastStepMs_ = millis();
+    stepIndex_ = (stepIndex_ + 1) % (sizeof(kTest) / sizeof(kTest[0]));
+    TimeOfDay t = kTest[stepIndex_];
+    clockScreen.setManualTime(t, true);
+    Serial.printf("[TEST] hand stamp %d:%02d:%02d\n", t.hour, t.minute,
+                  t.second);
+  }
+  clockScreen.update();
+  DisplayManager::tick();
+  delay(16);
+#else
+  clockScreen.update();  // move hands from the running virtual clock
+  DisplayManager::tick();
+
+  // Radio service loop
+  if (radioInitialized) {
+    radioService.loop();
+
+#if ENABLE_DEMO_SEQUENCES
+    // Simple radio test sequence (every 10 seconds) - demo mode only
+    if (millis() - lastRadioTestMs > 10000) {
+      lastRadioTestMs = millis();
+      const RadioStatus& status = radioService.getStatus();
+      Serial.printf("[RADIO] Freq: %.2f MHz, RSSI: %d, Stereo: %s, PS: %s\n",
+                    status.frequency / 100.0f,
+                    status.rssi,
+                    status.stereo ? "Yes" : "No",
+                    status.programService);
+
+      // Test sequence: seek up every 10 seconds
+      if (radioTestStep % 2 == 0) {
+        Serial.println(F("[RADIO] Seek Up..."));
+        radioService.seekUp();
+      } else {
+        Serial.println(F("[RADIO] Seek Down..."));
+        radioService.seekDown();
+      }
+      radioTestStep++;
+    }
+#endif
+  }
+
+  // WebServer + WifiManager loop (async, but keep for consistency)
+  if (webInitialized) {
+    webServer.loop();
+  }
+  if (wifiManager.isApActive()) {
+    wifiManager.loop();
+  }
+
+  // Periodic config save (debounced)
+  if (radioInitialized && millis() - lastConfigSaveMs > CONFIG_SAVE_INTERVAL_MS) {
+    lastConfigSaveMs = millis();
+    RadioConfig config = radioService.getConfig();
+    radioStore.saveConfig(config);
+    
+    // Also save station list if we have one
+    size_t count = 0;
+    const RadioStation* stations = radioService.getStations(count);
+    if (count > 0) {
+      radioStore.saveStations(stations, count);
+    }
+  }
+
+#if ENABLE_DEMO_SEQUENCES
+  // Screen switching test: toggle between clock and radio every 15 seconds (demo mode only)
+  if (millis() - lastScreenSwitchMs > 15000) {
+    lastScreenSwitchMs = millis();
+    showRadioScreen = !showRadioScreen;
+    if (showRadioScreen) {
+      clockScreen.setVisible(false);
+      radioScreen.setVisible(true);
+      Serial.println(F("[SCREEN] Switched to RadioScreen"));
+    } else {
+      radioScreen.setVisible(false);
+      clockScreen.setVisible(true);
+      Serial.println(F("[SCREEN] Switched to ClockScreen"));
+    }
+  }
+#endif
+
+  delay(33);
+#endif
+}

@@ -124,35 +124,39 @@ class Elm327Server::BleCallbacks : public NimBLECharacteristicCallbacks {
 
   // Runs on the NimBLE host task. Must not touch bleRxBuffer_ (an Arduino
   // String) directly - only enqueue raw bytes for the loop task to consume.
-  void onWrite(NimBLECharacteristic* characteristic, NimBLEConnInfo&) override {
-    const std::string value = characteristic->getValue();
-    if (value.empty()) {
-      return;
-    }
+   void onWrite(NimBLECharacteristic* characteristic, NimBLEConnInfo&) override {
+     const std::string value = characteristic->getValue();
+     if (value.empty()) {
+       return;
+     }
 
-    Serial.print(F("BLE RAW LEN="));
-    Serial.println(value.length());
-    Serial.print(F("BLE RAW ASCII=["));
-    Serial.print(Elm327Server::escapeForLog(String(value.c_str())));
-    Serial.println(F("]"));
-    Serial.print(F("BLE RAW HEX="));
-    for (size_t i = 0; i < value.length(); ++i) {
-      char hex[4];
-      snprintf(hex, sizeof(hex), "%02X ", static_cast<uint8_t>(value[i]));
-      Serial.print(hex);
-    }
-    Serial.println();
+#ifdef ELM_VERBOSE
+     Serial.print(F("BLE RAW LEN="));
+     Serial.println(value.length());
+     Serial.print(F("BLE RAW ASCII=["));
+     Serial.print(Elm327Server::escapeForLog(String(value.c_str())));
+     Serial.println(F("]"));
+     Serial.print(F("BLE RAW HEX="));
+     for (size_t i = 0; i < value.length(); ++i) {
+       char hex[4];
+       snprintf(hex, sizeof(hex), "%02X ", static_cast<uint8_t>(value[i]));
+       Serial.print(hex);
+     }
+     Serial.println();
+#endif
 
-    if (server_.bleRxQueue_ == nullptr) {
-      return;
-    }
-    for (size_t i = 0; i < value.length(); ++i) {
-      const uint8_t byteValue = static_cast<uint8_t>(value[i]);
-      if (xQueueSend(server_.bleRxQueue_, &byteValue, 0) != pdTRUE) {
-        Serial.println(F("BLE RX queue full, dropping byte"));
-        break;
-      }
-    }
+     if (server_.bleRxQueue_ == nullptr) {
+       return;
+     }
+     for (size_t i = 0; i < value.length(); ++i) {
+       const uint8_t byteValue = static_cast<uint8_t>(value[i]);
+       if (xQueueSend(server_.bleRxQueue_, &byteValue, 0) != pdTRUE) {
+#ifdef ELM_VERBOSE
+         Serial.println(F("BLE RX queue full, dropping byte"));
+#endif
+         break;
+       }
+     }
   }
 
  private:
@@ -168,26 +172,30 @@ class Elm327Server::BleServerCallbacks : public NimBLEServerCallbacks {
  public:
   explicit BleServerCallbacks(Elm327Server& server) : server_(server) {}
 
-  void onConnect(NimBLEServer*, NimBLEConnInfo&) override {
-    Serial.println(F("BLE CONNECTED"));
-    server_.bleRxBuffer_ = "";
-    if (server_.bleRxQueue_ != nullptr) {
-      xQueueReset(server_.bleRxQueue_);
-    }
-    server_.resetAdapterState();
-  }
+   void onConnect(NimBLEServer*, NimBLEConnInfo&) override {
+#ifdef ELM_VERBOSE
+     Serial.println(F("BLE CONNECTED"));
+#endif
+     server_.bleRxBuffer_ = "";
+     if (server_.bleRxQueue_ != nullptr) {
+       xQueueReset(server_.bleRxQueue_);
+     }
+     server_.resetAdapterState();
+   }
 
-  void onDisconnect(NimBLEServer* bleServer, NimBLEConnInfo&, int reason) override {
-    Serial.print(F("BLE DISCONNECTED reason="));
-    Serial.println(reason);
-    server_.bleRxBuffer_ = "";
-    if (server_.bleRxQueue_ != nullptr) {
-      xQueueReset(server_.bleRxQueue_);
-    }
-    // Explicit restart as a safety net in case advertiseOnDisconnect() does
-    // not fire for this disconnect reason.
-    bleServer->startAdvertising();
-  }
+   void onDisconnect(NimBLEServer* bleServer, NimBLEConnInfo&, int reason) override {
+#ifdef ELM_VERBOSE
+     Serial.print(F("BLE DISCONNECTED reason="));
+     Serial.println(reason);
+#endif
+     server_.bleRxBuffer_ = "";
+     if (server_.bleRxQueue_ != nullptr) {
+       xQueueReset(server_.bleRxQueue_);
+     }
+     // Explicit restart as a safety net in case advertiseOnDisconnect() does
+     // not fire for this disconnect reason.
+     bleServer->startAdvertising();
+   }
 
  private:
   Elm327Server& server_;
@@ -229,7 +237,8 @@ void Elm327Server::begin() {
   bleCallbacks_ = new BleCallbacks(*this);
   bleTxCharacteristic_->setCallbacks(bleCallbacks_);
   bleTxCharacteristic_->setValue(">");
-  bleService->start();
+  // NimBLE 2.x starts services together with the server; the historical
+  // bleService->start() call is deprecated and has no effect.
   NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
   advertising->setName("ELM327 Opel1935");
   advertising->addServiceUUID("FFE0");
@@ -249,40 +258,44 @@ void Elm327Server::begin() {
 }
 
 void Elm327Server::update() {
-  if (client_ && !client_.connected()) {
-    Serial.println(F("Client disconnected"));
-    client_.stop();
-    rxBuffer_ = "";
-  }
+   if (client_ && !client_.connected()) {
+#ifdef ELM_VERBOSE
+     Serial.println(F("Client disconnected"));
+#endif
+     client_.stop();
+     rxBuffer_ = "";
+   }
 
-  acceptClientIfNeeded();
+   acceptClientIfNeeded();
 
-  processBleBytes();
+   processBleBytes();
 
-  if (client_ && client_.connected()) {
-    processClientBytes();
-  }
+   if (client_ && client_.connected()) {
+     processClientBytes();
+   }
 }
 
 void Elm327Server::acceptClientIfNeeded() {
-  if (!server_.hasClient()) {
-    return;
-  }
+   if (!server_.hasClient()) {
+     return;
+   }
 
-  if (client_ && client_.connected()) {
-    WiFiClient extraClient = server_.available();
-    extraClient.stop();
-    return;
-  }
+   if (client_ && client_.connected()) {
+     WiFiClient extraClient = server_.available();
+     extraClient.stop();
+     return;
+   }
 
-  client_ = server_.available();
-  rxBuffer_ = "";
+   client_ = server_.available();
+   rxBuffer_ = "";
 
-  Serial.print(F("Client connected: "));
-  Serial.println(client_.remoteIP());
+#ifdef ELM_VERBOSE
+   Serial.print(F("Client connected: "));
+   Serial.println(client_.remoteIP());
+#endif
 
-  // Real ELM327 adapters stay silent until the client sends the first
-  // command; an unsolicited ">" here can desync a strict ELM parser.
+   // Real ELM327 adapters stay silent until the client sends the first
+   // command; an unsolicited ">" here can desync a strict ELM parser.
 }
 
 void Elm327Server::processClientBytes() {
@@ -302,13 +315,15 @@ void Elm327Server::processClientBytes() {
       continue;
     }
 
-    if (rxBuffer_.length() < 128) {
-      rxBuffer_ += ch;
-    } else {
-      Serial.println(F("RX buffer overflow, dropping command"));
-      rxBuffer_ = "";
-      sendResponse("", "?");
-    }
+     if (rxBuffer_.length() < 128) {
+       rxBuffer_ += ch;
+     } else {
+#ifdef ELM_VERBOSE
+       Serial.println(F("RX buffer overflow, dropping command"));
+#endif
+       rxBuffer_ = "";
+       sendResponse("", "?");
+     }
   }
 }
 
@@ -318,19 +333,23 @@ void Elm327Server::processBleBytes() {
   if (bleRxQueue_ != nullptr) {
     uint8_t byteValue = 0;
     bool drainedAny = false;
-    while (xQueueReceive(bleRxQueue_, &byteValue, 0) == pdTRUE) {
-      bleRxBuffer_ += static_cast<char>(byteValue);
-      drainedAny = true;
-      if (bleRxBuffer_.length() > 256) {
-        bleRxBuffer_ = "";
-        Serial.println(F("BLE RX buffer overflow, dropping command"));
-      }
-    }
-    if (drainedAny) {
-      Serial.print(F("COMMAND BUFFER=["));
-      Serial.print(escapeForLog(bleRxBuffer_));
-      Serial.println(F("]"));
-    }
+     while (xQueueReceive(bleRxQueue_, &byteValue, 0) == pdTRUE) {
+       bleRxBuffer_ += static_cast<char>(byteValue);
+       drainedAny = true;
+       if (bleRxBuffer_.length() > 256) {
+         bleRxBuffer_ = "";
+#ifdef ELM_VERBOSE
+         Serial.println(F("BLE RX buffer overflow, dropping command"));
+#endif
+       }
+     }
+#ifdef ELM_VERBOSE
+     if (drainedAny) {
+       Serial.print(F("COMMAND BUFFER=["));
+       Serial.print(escapeForLog(bleRxBuffer_));
+       Serial.println(F("]"));
+     }
+#endif
   }
 
   while (true) {
@@ -354,30 +373,34 @@ void Elm327Server::processBleBytes() {
 }
 
 void Elm327Server::processCommand(const String& rawCommand) {
-  const String normalizedCommand = normalizeCommand(rawCommand);
-  if (normalizedCommand.isEmpty()) {
-    sendResponse(rawCommand, "");
-    return;
-  }
+   const String normalizedCommand = normalizeCommand(rawCommand);
+   if (normalizedCommand.isEmpty()) {
+     sendResponse(rawCommand, "");
+     return;
+   }
 
-  Serial.print(F("ELM COMMAND=["));
-  Serial.print(normalizedCommand);
-  Serial.println(F("]"));
+#ifdef ELM_VERBOSE
+   Serial.print(F("ELM COMMAND=["));
+   Serial.print(normalizedCommand);
+   Serial.println(F("]"));
+#endif
 
-  String response;
-  if (normalizedCommand.startsWith("AT")) {
-    response = handleAtCommand(normalizedCommand);
-  } else {
-    response = handleObdCommand(normalizedCommand);
-  }
+   String response;
+   if (normalizedCommand.startsWith("AT")) {
+     response = handleAtCommand(normalizedCommand);
+   } else {
+     response = handleObdCommand(normalizedCommand);
+   }
 
-  if (response.isEmpty()) {
-    Serial.print(F("UNKNOWN COMMAND: "));
-    Serial.println(rawCommand);
-    response = "?";
-  }
+   if (response.isEmpty()) {
+#ifdef ELM_VERBOSE
+     Serial.print(F("UNKNOWN COMMAND: "));
+     Serial.println(rawCommand);
+#endif
+     response = "?";
+   }
 
-  sendResponse(rawCommand, response);
+   sendResponse(rawCommand, response);
 }
 
 String Elm327Server::normalizeCommand(const String& rawCommand) const {
