@@ -18,4 +18,9 @@ constexpr uint16_t kMaxFrequency10kHz = 10800;
 // RadioStore. Must match the fixed-size RadioStation array in RadioService.
 constexpr size_t kMaxStations = 50;
 
+// Stations weaker than this RSSI (dBµV) are skipped during a scan. Field
+// tests show RSSI < 36 is mostly noise/weak adjacent carriers - only show
+// stations with RSSI >= 36.
+constexpr uint8_t kMinStationRssi = 36;
+
 }  // namespace app_config

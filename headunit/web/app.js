@@ -204,8 +204,8 @@ function renderStations(stations) {
                 <div class="station-head">
                     <div class="station-name">${stationName}</div>
                     <div class="station-nudge">
-                        <button class="nudge-btn" onclick="event.stopPropagation();nudgeFrom(${st.frequency},-100)">−</button>
-                        <button class="nudge-btn" onclick="event.stopPropagation();nudgeFrom(${st.frequency},100)">+</button>
+                        <button class="nudge-btn" onclick="event.stopPropagation();nudgeFrom(${st.frequency},-10)">−</button>
+                        <button class="nudge-btn" onclick="event.stopPropagation();nudgeFrom(${st.frequency},10)">+</button>
                     </div>
                 </div>
                 <div class="station-meta">
@@ -218,7 +218,7 @@ function renderStations(stations) {
         .join('');
 }
 
-// Tune to the given frequency first, then shift by step (e.g. 100 = +0.1 MHz)
+// Tune to the given frequency first, then shift by step (e.g. 10 = +0.1 MHz)
 function nudgeFrom(baseFreq, step) {
     fetch(`${API}/frequency`, {
         method: 'POST',

@@ -197,10 +197,15 @@ void WebServer::_setupRestEndpoints() {
         }
     });
 
-    // POST /api/radio/nudge - shift frequency by +0.1 MHz (100) or -0.1 MHz (-100)
+    // POST /api/radio/nudge - shift frequency by +0.1 MHz (10) or -0.1 MHz (-10)
     _registerJsonPost("/api/radio/nudge", [this](AsyncWebServerRequest* request, const JsonDocument& doc) {
         int step = doc["step"] | 0;
-        if (step != 100 && step != -100) {
+        // Accept the legacy ±100 (1 MHz in 10kHz units) too and map it down to
+        // ±0.1 MHz so a stale cached app.js still works; the intended step is
+        // ±10 (0.1 MHz).
+        if (step == 100) step = 10;
+        if (step == -100) step = -10;
+        if (step != 10 && step != -10) {
             _sendJson(request, 400, "{\"error\":\"Invalid step\"}");
             return;
         }

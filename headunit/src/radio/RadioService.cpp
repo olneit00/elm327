@@ -551,6 +551,7 @@ void RadioService::_pollRds() {
                 strncpy(_status.programService, ps, 8);
                 _status.programService[8] = '\0';
                 changed = true;
+                Serial.printf("[RDS::PS] decoded station name: \"%s\"\n", _status.programService);
             }
 
             // RadioText (RT) - song info etc. from RDS 2A
@@ -559,9 +560,14 @@ void RadioService::_pollRds() {
                 strncpy(_status.radioText, rt, 64);
                 _status.radioText[64] = '\0';
                 changed = true;
+                Serial.printf("[RDS::DEBUG] radio text decoded: \"%.48s\"\n", _status.radioText);
             }
+
+            Serial.printf("[RDS::DEBUG] ready=true state=%d freq=%.2fMHz PS=\"%.8s\" RT=\"%.16s\"\n",
+                          (int)_state, _status.frequency / 100.0f,
+                          _status.programService, _status.radioText);
         }
-if (changed) _notifyStatus();
+        if (changed) _notifyStatus();
 
         // Clock Time (CT) - real UTC time from RDS group 4A, format "HH:MM +01:00"
         char* rdsTime = _si470x.getRdsTime();
@@ -586,6 +592,24 @@ if (changed) _notifyStatus();
             }
             Serial.printf("[RDS::TIME] CT=%s -> local %02u:%02u\n",
                           rdsTime, localHour, localMinute);
+        }
+    } else {
+        // Throttled: log roughly every 2s so we can see the radio is in Idle
+        // and polling but the current frequency carries no (or no decodable)
+        // RDS yet. Include the raw status register (0x0A) so we can see
+        // whether the chip is even synchronizing (RDSS bit 15) or flagging
+        // RDS-ready (RDSR bit 14) at the hardware level.
+        static uint32_t lastNoRdsLogMs = 0;
+        if (millis() - lastNoRdsLogMs > 2000) {
+            lastNoRdsLogMs = millis();
+            _si470x.getStatus();  // refresh shadow registers 0x0A-0x0F
+            uint16_t reg0a = _si470x.getShadownRegister(0x0A);
+            uint16_t reg0d = _si470x.getShadownRegister(0x0D);
+            uint16_t reg0f = _si470x.getShadownRegister(0x0F);
+            Serial.printf("[RDS::DEBUG] no RDS (state=%d freq=%.2fMHz RSSI=%u) reg0A=0x%04X (RDSS=%u RDSR=%u) 0D=0x%04X 0F=0x%04X\n",
+                          (int)_state, _status.frequency / 100.0f, _status.rssi,
+                          reg0a, (reg0a >> 15) & 1, (reg0a >> 14) & 1,
+                          reg0d, reg0f);
         }
     }
 }
@@ -648,6 +672,14 @@ _si470x.getStatus();
             !isValidFrequency(freq) ? "yes" : "no",
             freq,
             _isDuplicateFrequency(freq) ? "yes" : "no");
+        return false;
+    }
+
+    // Skip weak/noise hits so the limited station buffer is not filled with
+    // marginal channels and real stations at the top of the band make it in.
+    if (rssi < app_config::kMinStationRssi) {
+        Serial.printf("[RADIO::SCAN::STORE] Skipped weak station %.2f MHz (RSSI=%u < %u)\n",
+            freq / 100.0f, rssi, app_config::kMinStationRssi);
         return false;
     }
 
