@@ -471,7 +471,30 @@ void RadioService::_pollRds() {
 
     _lastRdsPollMs = millis();
 
-    if (_si470x.getRdsReady()) {
+    const bool rdsReady = _si470x.getRdsReady();
+
+    // Rate-limited visibility into whether the tuner is asserting RDS-ready
+    // at all, independent of whether we ever manage to decode text from it.
+    // This distinguishes two very different problems that both look like
+    // "no RDS" from the outside:
+    //   - ready=no, ~always: the Si4703 itself never locks the 57 kHz RDS
+    //     subcarrier on this signal. RDS needs noticeably better SNR than
+    //     plain mono/stereo audio - a station that sounds clear can still
+    //     have zero usable RDS. Most common real causes: too weak/short an
+    //     antenna, poor antenna placement/grounding, or a genuinely
+    //     RDS-free station. This is a hardware/RF issue, not a firmware bug.
+    //   - ready=yes at least sometimes, but text never updates: points at
+    //     our own group-type handling in _pollRds() below, or a library
+    //     issue in getRdsText0A()/getRdsText2A() - worth filing upstream.
+    static uint32_t lastRdsDiagMs = 0;
+    if (millis() - lastRdsDiagMs > 5000) {
+        lastRdsDiagMs = millis();
+        Serial.printf("[RDS::DIAG] ready=%s rssi=%u stereo=%s freq=%.2f MHz\n",
+                      rdsReady ? "yes" : "no", _status.rssi, _status.stereo ? "yes" : "no",
+                      _status.frequency / 100.0f);
+    }
+
+    if (rdsReady) {
         bool changed = false;
         {
             MutexGuard guard(_mutex);
