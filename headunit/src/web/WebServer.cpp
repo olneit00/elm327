@@ -7,6 +7,7 @@
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
 #include <ArduinoJson.h>
+#include <LittleFS.h>
 #include "web/WebServer.h"
 #include "radio/RadioService.h"
 #include "net/WifiManager.h"
@@ -387,8 +388,17 @@ void WebServer::_setupSSE() {
 }
 
 void WebServer::_setupStaticFiles() {
-    // Serve static files from LittleFS if available
-    // For now, we'll serve the HTML/CSS/JS from string constants
+    // Serve the web assets from LittleFS. The ESPAsyncWebServer truncation
+    // fix (PR #316, pinned in platformio.ini) makes responses of any size
+    // reliable, so external files are preferred over embedded strings.
+    // Fall back to the embedded strings only if LittleFS is unavailable.
+    if (LittleFS.begin()) {
+        _server->serveStatic("/radio/style.css", LittleFS, "/style.css").setDefaultFile("/style.css");
+        _server->serveStatic("/radio/app.js", LittleFS, "/app.js").setDefaultFile("/app.js");
+        _server->serveStatic("/radio", LittleFS, "/index.html").setDefaultFile("/index.html");
+        _server->serveStatic("/", LittleFS, "/index.html").setDefaultFile("/index.html");
+    }
+
     _server->on("/", HTTP_GET, [](AsyncWebServerRequest* request) {
         request->redirect("/radio");
     });

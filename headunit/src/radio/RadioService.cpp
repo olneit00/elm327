@@ -381,7 +381,6 @@ void RadioService::setStations(const RadioStation* stations, size_t count) {
     }
     _notifyStationList();
 }
-}
 
 bool RadioService::setVolume(uint8_t volume) {
      if (volume > 15) volume = 15;

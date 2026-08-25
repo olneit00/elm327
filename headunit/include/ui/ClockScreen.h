@@ -12,6 +12,9 @@
 // than copying it, so per-frame updates happen in place.
 //
 #include <lvgl.h>
+#include <Arduino.h>
+
+// (ClockScreen owns an analog clock; see header comment.)
 
 #include "time/TimeProvider.h"
 
