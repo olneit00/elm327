@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <LittleFS.h>
+#include <ESPmDNS.h>
 
 #include "display/DisplayManager.h"
 #include "hardware/Pins.h"
@@ -96,6 +97,20 @@ void onStationSelected(uint16_t frequency, const char* programService) {
 // WifiManager callback
 void onStaConnect(bool success, const IPAddress& ip) {
     Serial.printf("[WIFI] STA callback: success=%d, ip=%s\n", success, ip.toString().c_str());
+    if (success) {
+        // mDNS only makes sense once we're actually on the home/existing
+        // network (the isolated AP has no other clients to resolve names
+        // for); lets you reach the device at http://opel-radio.local
+        // instead of having to look up its DHCP-assigned IP, which is the
+        // main point of joining an existing network in the first place -
+        // easier debugging/access than being confined to the AP.
+        if (MDNS.begin("opel-radio")) {
+            MDNS.addService("http", "tcp", 80);
+            Serial.println(F("[WIFI] mDNS responder started: http://opel-radio.local"));
+        } else {
+            Serial.println(F("[WIFI] mDNS responder failed to start"));
+        }
+    }
 }
 
 }  // namespace
@@ -174,6 +189,20 @@ void setup() {
     }
   }
   wifiManager.setStaConnectCallback(onStaConnect);
+
+  // Additionally join a previously configured home/existing WiFi network
+  // (STA mode, alongside our own AP) if credentials were saved via
+  // POST /api/radio/config - much easier to reach/debug the device on a
+  // known network than being confined to the isolated AP. This used to be
+  // wired up but the actual auto-connect-at-boot call had gone missing;
+  // the rest of the STA plumbing (WIFI_AP_STA mode, RadioConfig.staSsid/
+  // staPassword persistence, the non-blocking connectSta() state machine)
+  // was already in place. connectSta() does not block - the connection
+  // attempt and its timeout are polled from wifiManager.loop() below.
+  if (strlen(config.staSsid) > 0) {
+    Serial.printf("[WIFI] Auto-connecting to saved network: %s\n", config.staSsid);
+    wifiManager.connectSta(config.staSsid, config.staPassword);
+  }
 
 #if defined(HEADUNIT_TEST_MODE)
   clockScreen.setManualTime(kTest[0], true);
