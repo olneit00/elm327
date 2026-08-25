@@ -122,6 +122,21 @@ bool RadioService::_initHardware() {
     // a perfectly standard raster for European FM.
     _si470x.setFmDeemphasis(1); // 50 us (Europe)
 
+    // Re-enable AGC (Automatic Gain Control), which the PU2CLR library's own
+    // powerUp() disables unconditionally:
+    //   reg04->refined.AGCD = 1;  // 0 = AGC enable (default per the chip's
+    //                             // own register comment), 1 = disable
+    // With AGC off, the front-end gain is fixed rather than adapted to the
+    // actual signal strength. On a moderate/strong station this let the
+    // input stage run too hot for the much lower-amplitude 57 kHz RDS
+    // subcarrier, which is far more sensitive to front-end distortion than
+    // the main audio path: RSSI read fine and audio sounded normal, RDSR
+    // ("RDS ready") occasionally blipped true on a lucky group, but RDSS
+    // ("RDS Synchronized") never latched because the subcarrier itself was
+    // too distorted to track continuously. Re-enabling AGC here restores
+    // the chip's normal adaptive behavior.
+    _si470x.setAgc(true);
+
     // RDS enable
     _si470x.setRds(true);
 
