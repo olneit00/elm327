@@ -18,6 +18,12 @@ public:
     using StatusCallback = void (*)(const RadioStatus&);
     using StationListCallback = void (*)(const RadioStation*, size_t);
     using ScanProgressCallback = void (*)(uint8_t progress, uint8_t count, bool scanning);
+    // Fired once when a station is actively selected (explicit tune request
+    // or a completed seek), as opposed to StatusCallback which also fires
+    // continuously for RDS/RSSI polling updates. programService is empty
+    // when not yet known (e.g. right after a fresh tune, before RDS has had
+    // a chance to decode it) - consumers should fall back to the frequency.
+    using StationSelectedCallback = void (*)(uint16_t frequency, const char* programService);
 
     RadioService();
     ~RadioService();
@@ -77,6 +83,7 @@ public:
     void setStatusCallback(StatusCallback cb) { _statusCallback = cb; }
     void setStationListCallback(StationListCallback cb) { _stationListCallback = cb; }
     void setScanProgressCallback(ScanProgressCallback cb) { _scanProgressCallback = cb; }
+    void setStationSelectedCallback(StationSelectedCallback cb) { _stationSelectedCallback = cb; }
 
     // GALA interface - called with vehicle speed km/h
     void setSpeedKmh(float speedKmh);
@@ -123,11 +130,13 @@ private:
     StatusCallback _statusCallback = nullptr;
     StationListCallback _stationListCallback = nullptr;
     ScanProgressCallback _scanProgressCallback = nullptr;
+    StationSelectedCallback _stationSelectedCallback = nullptr;
 
     // Internal helpers
     void _notifyStatus();
     void _notifyStationList();
     void _notifyScanProgress();
+    void _notifyStationSelected(uint16_t frequency, const char* programService);
 
     bool _initHardware();
     void _applyVolume();

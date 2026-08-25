@@ -32,8 +32,15 @@ class ClockScreen {
   void setManualTime(TimeOfDay value, bool enabled);
 
   // Recomputes hand angles from the current time and invalidates them so
-  // the next DisplayManager::tick() flushes the changes.
+  // the next DisplayManager::tick() flushes the changes. Also drives the
+  // station-info overlay's auto-hide timeout - must be called every frame.
   void update();
+
+  // Shows `text` (station name or "xx.xx MHz") in a small label centered
+  // over the dial for durationMs, then hides it again automatically. Used
+  // to briefly confirm which station was just selected (tune/seek) without
+  // requiring the separate RadioScreen to be visible.
+  void showStationInfo(const String& text, uint32_t durationMs = 5000);
 
  private:
   void renderFace();
@@ -49,6 +56,14 @@ class ClockScreen {
   lv_obj_t* minuteHand_ = nullptr;
   lv_obj_t* hourHand_ = nullptr;
   lv_obj_t* faceImage_ = nullptr;
+
+  // Station-info overlay (see showStationInfo()). _stationLabelVisible
+  // tracks whether info is "currently pending" independent of whether the
+  // clock screen itself is visible (setVisible() re-applies it if the user
+  // switches back to the clock while the 5s window hasn't elapsed yet).
+  lv_obj_t* _stationLabel = nullptr;
+  bool _stationLabelVisible = false;
+  uint32_t _stationLabelHideAtMs = 0;
 
   // Last handed-out rotation values in LVGL 0.1 deg units; skips redundant
   // invalidations when a hand did not visibly move.

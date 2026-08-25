@@ -83,6 +83,21 @@ void ClockScreen::create() {
    // Second hand on top: thin red line, procedural.
    secondHand_ = createSecondHand();
 
+   // Station-info overlay: created last so it renders above the hands.
+   // Hidden by default; showStationInfo()/update() control its lifetime.
+   _stationLabel = lv_label_create(lv_screen_active());
+   lv_obj_remove_style_all(_stationLabel);
+   lv_obj_set_style_bg_color(_stationLabel, lv_color_hex(0x000000), 0);
+   lv_obj_set_style_bg_opa(_stationLabel, LV_OPA_70, 0);
+   lv_obj_set_style_radius(_stationLabel, 6, 0);
+   lv_obj_set_style_pad_all(_stationLabel, 6, 0);
+   lv_obj_set_style_text_color(_stationLabel, lv_color_hex(0xFFFFFF), 0);
+   lv_obj_set_style_text_align(_stationLabel, LV_TEXT_ALIGN_CENTER, 0);
+   lv_label_set_long_mode(_stationLabel, LV_LABEL_LONG_DOT);
+   lv_obj_set_width(_stationLabel, 140);
+   lv_obj_align(_stationLabel, LV_ALIGN_CENTER, 0, 0);
+   lv_obj_add_flag(_stationLabel, LV_OBJ_FLAG_HIDDEN);
+
    _visible = true;
 }
 
@@ -102,6 +117,18 @@ void ClockScreen::setVisible(bool visible) {
          }
       }
    }
+
+   // The station-info overlay follows _stationLabelVisible (still within
+   // its 5s window) rather than always mirroring the clock's own
+   // visibility - re-showing the clock mid-countdown should still show it.
+   if (_stationLabel) {
+      if (visible && _stationLabelVisible) {
+         lv_obj_clear_flag(_stationLabel, LV_OBJ_FLAG_HIDDEN);
+         lv_obj_invalidate(_stationLabel);
+      } else {
+         lv_obj_add_flag(_stationLabel, LV_OBJ_FLAG_HIDDEN);
+      }
+   }
 }
 
 void ClockScreen::attachTimeSource(ITimeSource* source) { source_ = source; }
@@ -112,6 +139,13 @@ void ClockScreen::setManualTime(TimeOfDay value, bool enabled) {
 }
 
 void ClockScreen::update() {
+  if (_stationLabelVisible && millis() >= _stationLabelHideAtMs) {
+    _stationLabelVisible = false;
+    if (_stationLabel) {
+      lv_obj_add_flag(_stationLabel, LV_OBJ_FLAG_HIDDEN);
+    }
+  }
+
   if (source_ == nullptr && !manualEnabled_) {
     return;
   }
@@ -132,6 +166,19 @@ void ClockScreen::update() {
   }
 
   reorientSecondHand(SecondAngle(t));
+}
+
+void ClockScreen::showStationInfo(const String& text, uint32_t durationMs) {
+  if (_stationLabel == nullptr) return;  // create() has not run yet
+
+  lv_label_set_text(_stationLabel, text.c_str());
+  _stationLabelVisible = true;
+  _stationLabelHideAtMs = millis() + durationMs;
+
+  if (_visible) {
+    lv_obj_clear_flag(_stationLabel, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_invalidate(_stationLabel);
+  }
 }
 
 lv_obj_t* ClockScreen::createSecondHand() {

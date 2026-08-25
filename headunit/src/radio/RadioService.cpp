@@ -87,9 +87,24 @@ bool RadioService::_initHardware() {
         // Continue anyway
     }
 
-    // Configure for Europe: 87.5-108 MHz (band 0), 50kHz spacing (space 2), 50us de-emphasis
+    // Configure for Europe: 87.5-108 MHz (band 0), 50us de-emphasis.
     _si470x.setBand(0);        // FM_BAND_USA_EU = 87.5-108 MHz
-    _si470x.setSpace(2);       // 50 kHz spacing
+    // Deliberately NOT calling _si470x.setSpace(2) here: the PU2CLR SI470X
+    // library (as of its current release/master) has a bug where
+    // setSpace() writes its argument into the wrong internal field -
+    //   void SI470X::setSpace(uint8_t space) {
+    //     this->currentFMBand = reg05->refined.SPACE = space;  // should be currentFMSpace
+    //   }
+    // - so calling it after setBand(0) silently corrupts the library's
+    // internal band back to FM_BAND_JAPAN (76-90 MHz) while its internal
+    // "current spacing" cache is *not* updated to match the hardware
+    // register it *did* write correctly. The two stay out of sync, and
+    // every subsequent setFrequency()/getRealFrequency() channel<->MHz
+    // conversion is computed against the wrong band/spacing pair, tuning
+    // to a frequency quite far from the one actually requested. Skipping
+    // setSpace() keeps the library's default channel spacing (100 kHz,
+    // set by its own powerUp()), which stays internally consistent and is
+    // a perfectly standard raster for European FM.
     _si470x.setFmDeemphasis(1); // 50 us (Europe)
 
     // RDS enable
@@ -98,8 +113,16 @@ bool RadioService::_initHardware() {
     // Initial volume
     _applyVolume();
 
-    // Tune to default frequency
-    _si470x.setFrequency(_status.frequency / 10);  // Library uses 0.1MHz steps (e.g., 875 = 87.5 MHz)
+    // Tune to default frequency. The PU2CLR library's setFrequency()/
+    // getFrequency()/getRealFrequency() all use the exact same 10 kHz-step
+    // representation as our own RadioStatus.frequency (e.g. 8750 = 87.50
+    // MHz - see startBand[]/endBand[] in SI470X.h and the setFrequency()
+    // docstring "send 10650 for 106.5 MHz"), so no unit conversion is
+    // needed or correct here. A previous "/ 10" here (based on an incorrect
+    // "library uses 0.1 MHz steps" assumption) caused an unsigned
+    // underflow inside the library's channel calculation, silently tuning
+    // to a wrapped/garbage channel instead of the requested frequency.
+    _si470x.setFrequency(_status.frequency);
     delay(100);
     _updateStatusFromHardware();
 
@@ -148,9 +171,20 @@ void RadioService::_stepTuning() {
 void RadioService::_stepSeeking() {
     _si470x.getStatus();
     if (_si470x.getShadownRegister(0x0A) & 0x01) {  // STC bit in register 0x0A
+        {
+            // The station just found by seek hasn't had its RDS text
+            // decoded yet - clear the previous station's stale text (see
+            // the same reasoning in setFrequency()).
+            MutexGuard guard(_mutex);
+            if (guard.acquired()) {
+                _status.programService[0] = '\0';
+                _status.radioText[0] = '\0';
+            }
+        }
         _updateStatusFromHardware();
         _state = RadioState::Idle;
         _notifyStatus();
+        _notifyStationSelected(_status.frequency, "");
     }
 }
 
@@ -244,15 +278,22 @@ bool RadioService::setFrequency(uint16_t frequency) {
 
          _config.lastFrequency = frequency;
          _status.frequency = frequency;
+         // The previous station's RDS text no longer applies to the new
+         // frequency and hasn't been decoded for this one yet - clear it so
+         // status consumers (web UI, station-selected overlay) fall back to
+         // showing the frequency instead of a stale/wrong station name.
+         _status.programService[0] = '\0';
+         _status.radioText[0] = '\0';
      }
 
-     // SI470X library expects frequency in 0.1 MHz steps (e.g., 922 = 92.2 MHz)
-     uint16_t libFreq = frequency / 10;
-     _si470x.setFrequency(libFreq);
+     // See the comment in _initHardware(): setFrequency() takes the same
+     // 10 kHz-step units as RadioStatus.frequency, no conversion needed.
+     _si470x.setFrequency(frequency);
 
      _state = RadioState::Tuning;
      _lastTuneMs = millis();
      _notifyStatus();
+     _notifyStationSelected(frequency, "");
      return true;
 }
 
@@ -357,8 +398,9 @@ void RadioService::_updateStatusFromHardware() {
 
     const uint8_t rssi = _si470x.getRssi();
     const bool stereo = _si470x.isStereo();
-    // Frequency in 10kHz steps
-    const uint16_t frequency = _si470x.getFrequency() * 10;  // lib returns 0.1MHz steps
+    // getFrequency() already returns the same 10 kHz-step units as
+    // RadioStatus.frequency (see the comment in _initHardware()) - no *10.
+    const uint16_t frequency = _si470x.getFrequency();
 
     MutexGuard guard(_mutex);
     if (!guard.acquired()) return;
@@ -399,11 +441,10 @@ void RadioService::_pollRds() {
 }
 
 bool RadioService::_scanSeekStart() {
-    // Start seek from current scan frequency
-    uint16_t libFreq = _scan.currentFreq / 10;
-    Serial.printf("[RADIO::SCAN::SEEK] Starting seek at %.2f MHz (libFreq=%u)\n", 
-        _scan.currentFreq / 100.0f, libFreq);
-    _si470x.setFrequency(libFreq);
+    // Start seek from current scan frequency. currentFreq is already in the
+    // same 10 kHz-step units setFrequency() expects (see _initHardware()).
+    Serial.printf("[RADIO::SCAN::SEEK] Starting seek at %.2f MHz\n", _scan.currentFreq / 100.0f);
+    _si470x.setFrequency(_scan.currentFreq);
     delay(50);
     Serial.println(F("[RADIO::SCAN::SEEK] Calling seek(0, 1)..."));
     _si470x.seek(0, 1);  // wrap, up
@@ -415,12 +456,13 @@ bool RadioService::_scanSeekWait() {
     _si470x.getStatus();
     bool stcSet = (_si470x.getShadownRegister(0x0A) & 0x01) != 0;  // STC bit
     if (stcSet) {
-        uint16_t libFreq = _si470x.getFrequency();
-        uint16_t freq = libFreq * 10;
+        // getFrequency() already returns 10 kHz-step units - no *10 (see
+        // the comment in _initHardware()).
+        uint16_t freq = _si470x.getFrequency();
         uint8_t rssi = _si470x.getRssi();
         bool stereo = _si470x.isStereo();
-        Serial.printf("[RADIO::SCAN::SEEK] FOUND: libFreq=%u (%.2f MHz), RSSI=%u, stereo=%s\n", 
-            libFreq, freq / 100.0f, rssi, stereo ? "yes" : "no");
+        Serial.printf("[RADIO::SCAN::SEEK] FOUND: freq=%u (%.2f MHz), RSSI=%u, stereo=%s\n", 
+            freq, freq / 100.0f, rssi, stereo ? "yes" : "no");
     }
     return stcSet;
 }
@@ -429,15 +471,15 @@ bool RadioService::_scanStoreStation() {
     _si470x.getStatus();
     
     // Use getRealFrequency() instead of getFrequency()!
-    // getFrequency() returns cached value, getRealFrequency() reads from register
-    uint16_t libFreq = _si470x.getRealFrequency();  // Returns 0.1MHz steps (e.g., 920 = 92.0 MHz)
-    uint16_t freq = libFreq * 10;  // Convert to 10kHz steps for our internal format
+    // getFrequency() returns cached value, getRealFrequency() reads from register.
+    // Both already return 10 kHz-step units - no *10 (see _initHardware()).
+    uint16_t freq = _si470x.getRealFrequency();
     
     uint8_t rssi = _si470x.getRssi();
     bool stereo = _si470x.isStereo();
 
     Serial.printf("[RADIO::SCAN::STORE] getRealFrequency()=%u (%.2f MHz), RSSI=%u, stereo=%s\n", 
-        libFreq, freq / 100.0f, rssi, stereo ? "yes" : "no");
+        freq, freq / 100.0f, rssi, stereo ? "yes" : "no");
 
     if (!isValidFrequency(freq) || _isDuplicateFrequency(freq)) {
         Serial.printf("[RADIO::SCAN::STORE] Rejected: invalid=%s (freq=%u, range=[8750-10800]), duplicate=%s\n",
@@ -555,6 +597,10 @@ RadioStatus RadioService::getStatus() const {
 
 void RadioService::_notifyStationList() {
     if (_stationListCallback) _stationListCallback(_scan.stations, _scan.stationCount);
+}
+
+void RadioService::_notifyStationSelected(uint16_t frequency, const char* programService) {
+    if (_stationSelectedCallback) _stationSelectedCallback(frequency, programService);
 }
 
 void RadioService::_notifyScanProgress() {

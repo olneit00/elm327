@@ -83,6 +83,16 @@ void onScanProgress(uint8_t progress, uint8_t count, bool scanning) {
     webServer.broadcastScanProgress(progress, count, scanning);
 }
 
+// Briefly shows the newly selected station's name (if RDS has already
+// decoded it) or its frequency in the center of the clock face, regardless
+// of which screen is currently active (see ClockScreen::showStationInfo()).
+void onStationSelected(uint16_t frequency, const char* programService) {
+    String text = (programService != nullptr && programService[0] != '\0')
+                      ? String(programService)
+                      : String(frequency / 100.0f, 2) + " MHz";
+    clockScreen.showStationInfo(text);
+}
+
 // WifiManager callback
 void onStaConnect(bool success, const IPAddress& ip) {
     Serial.printf("[WIFI] STA callback: success=%d, ip=%s\n", success, ip.toString().c_str());
@@ -149,6 +159,7 @@ void setup() {
   radioService.setStatusCallback(onRadioStatus);
   radioService.setStationListCallback(onStationList);
   radioService.setScanProgressCallback(onScanProgress);
+  radioService.setStationSelectedCallback(onStationSelected);
 
   // Initialize WiFi + WebServer
   Serial.println(F("[WEB] Starting WiFi AP + WebServer..."));
