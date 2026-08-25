@@ -211,7 +211,9 @@ void RadioService::_stepSeeking() {
     }
 
     _si470x.getStatus();
-    if (_si470x.getShadownRegister(0x0A) & 0x01) {  // STC bit in register 0x0A
+    // STC = bit1 (0x02), not bit0 (RDSR). See _scanSeekWait() for the full
+    // explanation of why the old "& 0x01" broke seek/scan on weak signals.
+    if (_si470x.getShadownRegister(0x0A) & 0x02) {  // STC: seek/tune complete
         {
             // The station just found by seek hasn't had its RDS text
             // decoded yet - clear the previous station's stale text (see
@@ -256,16 +258,22 @@ void RadioService::_stepScan() {
             }
             break;
 
-        case ScanState::SeekWait:
-            if (_scanSeekWait()) {
+        case ScanState::SeekWait: {
+            const int seekResult = _scanSeekWait();
+            // 0 = still running, 1 = station found, 2 = seek fail (no more stations)
+            if (seekResult == 1) {
                 Serial.printf("[RADIO::SCAN] Phase: SeekWait - FOUND station, storing...\n");
                 _scan.phase = ScanState::StoreStation;
+            } else if (seekResult == 2) {
+                Serial.printf("[RADIO::SCAN] Phase: SeekWait - seek fail, scan complete (%u found)\n", _scan.stationCount);
+                _scan.phase = ScanState::Complete;
             } else if (millis() - _scan.lastSeekMs > 2000) {
                 Serial.printf("[RADIO::SCAN] Phase: SeekWait - TIMEOUT after %lu ms, moving to NextSeek\n", 
                     millis() - _scan.lastSeekMs);
                 _scan.phase = ScanState::NextSeek;
             }
             break;
+            }
 
         case ScanState::StoreStation:
             Serial.println(F("[RADIO::SCAN] Phase: StoreStation"));
@@ -611,10 +619,21 @@ bool RadioService::_scanSeekStart() {
     return true;
 }
 
-bool RadioService::_scanSeekWait() {
+int RadioService::_scanSeekWait() {
     _si470x.getStatus();
-    bool stcSet = (_si470x.getShadownRegister(0x0A) & 0x01) != 0;  // STC bit
+    // Register 0x0A: Bit0=RDSR, Bit1=STC (Seek/Tune complete), Bit2=SF/BL
+    // (seek fail / band limit). Earlier code tested bit0 (RDSR) as if it were
+    // STC: with a strong antenna RDS traffic happened to keep RDSR high so a
+    // scan seemed to work, but with a weak/detached antenna RDSR stays 0 and
+    // every seek "never finished" -> empty station list.
+    const uint16_t reg0a = _si470x.getShadownRegister(0x0A);
+    const bool stcSet  = (reg0a & 0x02) != 0;   // bit 1
+    const bool seekFail = (reg0a & 0x04) != 0;  // bit 2
     if (stcSet) {
+        if (seekFail) {
+            Serial.printf("[RADIO::SCAN::SEEK] Seek failed (SF/BL): no more valid stations in band\n");
+            return 2;
+        }
         // getFrequency() already returns 10 kHz-step units - no *10 (see
         // the comment in _initHardware()).
         uint16_t freq = _si470x.getFrequency();
@@ -622,8 +641,9 @@ bool RadioService::_scanSeekWait() {
         bool stereo = _si470x.isStereo();
         Serial.printf("[RADIO::SCAN::SEEK] FOUND: freq=%u (%.2f MHz), RSSI=%u, stereo=%s\n", 
             freq, freq / 100.0f, rssi, stereo ? "yes" : "no");
+        return 1;
     }
-    return stcSet;
+    return 0;
 }
 
 bool RadioService::_scanStoreStation() {
