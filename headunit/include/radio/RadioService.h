@@ -7,6 +7,7 @@
 
 #include <Arduino.h>
 #include "RadioTypes.h"
+#include "config/AppConfig.h"
 #include <SI470X.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
@@ -47,18 +48,30 @@ public:
     uint8_t getScanCount() const { return _status.scanCount; }
     const RadioStation* getStations(size_t& count) const;
 
+    // Marks/unmarks a scanned station as favorite by frequency. Returns
+    // false if no station with that frequency is currently in the scan
+    // list. Favorites are embedded in RadioStation and persisted together
+    // with the station list (see RadioStore::saveStations()).
+    bool setFavorite(uint16_t frequency, bool favorite);
+
     // Volume (0-15 hardware scale, UI uses 0-100%)
     bool setVolume(uint8_t volume);  // 0-15
     uint8_t getVolume() const { return _status.volume; }
     bool setMuted(bool muted);
     bool isMuted() const { return _status.muted; }
 
-    // Status
-    const RadioStatus& getStatus() const { return _status; }
-    uint8_t getRSSI() const { return _status.rssi; }
-    bool isStereo() const { return _status.stereo; }
-    const char* getProgramService() const { return _status.programService; }
-    const char* getRadioText() const { return _status.radioText; }
+    // Status. Returns a snapshot copy (not a reference) protected by _mutex:
+    // _status is written continuously from loop() (main task) while this is
+    // called from AsyncWebServer handlers (a different FreeRTOS task), so an
+    // unprotected reference could observe a struct torn mid-update.
+    RadioStatus getStatus() const;
+    uint8_t getRSSI() const { return getStatus().rssi; }
+    bool isStereo() const { return getStatus().stereo; }
+    // Returned as String (not a raw pointer into _status) so the RDS text
+    // is copied out while still under the mutex, avoiding a torn read of a
+    // char[] concurrently being strncpy()'d in _pollRds() on the other task.
+    String getProgramService() const { return getStatus().programService; }
+    String getRadioText() const { return getStatus().radioText; }
 
     // Callbacks for external consumers (WebServer, RadioScreen)
     void setStatusCallback(StatusCallback cb) { _statusCallback = cb; }
@@ -88,9 +101,9 @@ private:
     // Scan state machine
     struct ScanState {
         enum Phase { Idle, SeekStart, SeekWait, StoreStation, NextSeek, Complete } phase = Phase::Idle;
-        uint16_t currentFreq = 8750;
+        uint16_t currentFreq = app_config::kMinFrequency10kHz;
         uint32_t lastSeekMs = 0;
-        RadioStation stations[50];  // Max 50 stations
+        RadioStation stations[app_config::kMaxStations];
         size_t stationCount = 0;
     } _scan;
 

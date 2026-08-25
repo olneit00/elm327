@@ -63,7 +63,7 @@ bool RadioStore::loadConfig(RadioConfig& config) {
         return false;
     }
 
-    StaticJsonDocument<512> doc;
+    JsonDocument doc;
     DeserializationError err = deserializeJson(doc, content);
     if (err) {
         Serial.printf("[STORE] Config parse error: %s\n", err.c_str());
@@ -81,7 +81,7 @@ bool RadioStore::loadConfig(RadioConfig& config) {
 }
 
 bool RadioStore::saveConfig(const RadioConfig& config) {
-    StaticJsonDocument<512> doc;
+    JsonDocument doc;
     doc["lastFrequency"] = config.lastFrequency;
     doc["lastVolume"] = config.lastVolume;
     doc["lastMuted"] = config.lastMuted;
@@ -102,7 +102,7 @@ bool RadioStore::loadStations(RadioStation* stations, size_t maxStations, size_t
         return false;
     }
 
-    StaticJsonDocument<4096> doc;
+    JsonDocument doc;
     DeserializationError err = deserializeJson(doc, content);
     if (err) {
         Serial.printf("[STORE] Stations parse error: %s\n", err.c_str());
@@ -129,11 +129,11 @@ bool RadioStore::loadStations(RadioStation* stations, size_t maxStations, size_t
 }
 
 bool RadioStore::saveStations(const RadioStation* stations, size_t count) {
-    StaticJsonDocument<4096> doc;
+    JsonDocument doc;
     JsonArray arr = doc.to<JsonArray>();
 
     for (size_t i = 0; i < count; i++) {
-        JsonObject obj = arr.createNestedObject();
+        JsonObject obj = arr.add<JsonObject>();
         obj["frequency"] = stations[i].frequency;
         obj["programService"] = stations[i].programService;
         obj["radioText"] = stations[i].radioText;
@@ -156,7 +156,7 @@ bool RadioStore::loadFavorites(uint16_t* favorites, size_t maxFavorites, size_t&
         return false;
     }
 
-    StaticJsonDocument<512> doc;
+    JsonDocument doc;
     DeserializationError err = deserializeJson(doc, content);
     if (err) {
         count = 0;
@@ -173,7 +173,7 @@ bool RadioStore::loadFavorites(uint16_t* favorites, size_t maxFavorites, size_t&
 }
 
 bool RadioStore::saveFavorites(const uint16_t* favorites, size_t count) {
-    StaticJsonDocument<512> doc;
+    JsonDocument doc;
     JsonArray arr = doc.to<JsonArray>();
     for (size_t i = 0; i < count; i++) {
         arr.add(favorites[i]);
@@ -191,7 +191,7 @@ bool RadioStore::loadStaCredentials(char* ssid, char* password) {
         return false;
     }
 
-    StaticJsonDocument<256> doc;
+    JsonDocument doc;
     DeserializationError err = deserializeJson(doc, content);
     if (err) return false;
 
@@ -201,7 +201,7 @@ bool RadioStore::loadStaCredentials(char* ssid, char* password) {
 }
 
 bool RadioStore::saveStaCredentials(const char* ssid, const char* password) {
-    StaticJsonDocument<256> doc;
+    JsonDocument doc;
     doc["ssid"] = ssid;
     doc["password"] = password;
     String json;

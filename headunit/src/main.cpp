@@ -10,6 +10,7 @@
 #include "radio/RadioStore.h"
 #include "net/WifiManager.h"
 #include "web/WebServer.h"
+#include "config/AppConfig.h"
 
 namespace {
 
@@ -50,6 +51,16 @@ bool radioInitialized = false;
 bool webInitialized = false;
 uint32_t lastConfigSaveMs = 0;
 static constexpr uint32_t CONFIG_SAVE_INTERVAL_MS = 5000;
+
+// Dirty-check state for persistence: avoids writing to flash on every
+// CONFIG_SAVE_INTERVAL_MS tick when nothing actually changed, which would
+// otherwise wear down the small LittleFS partition over months of
+// always-on, in-vehicle operation.
+RadioConfig lastSavedConfig;
+bool configEverSaved = false;
+RadioStation lastSavedStations[app_config::kMaxStations];
+size_t lastSavedStationCount = 0;
+bool stationsEverSaved = false;
 
 // Screen switching state
 bool showRadioScreen = false;
@@ -141,7 +152,11 @@ void setup() {
 
   // Initialize WiFi + WebServer
   Serial.println(F("[WEB] Starting WiFi AP + WebServer..."));
-  if (wifiManager.begin("Opel-Radio", "")) {
+  // WPA2 password: an empty one creates an open AP, letting anyone in range
+  // control the radio/WiFi config or sniff the STA credentials transmitted
+  // in POST /api/wifi/connect and /api/radio/config over it (WPA2 requires
+  // >= 8 characters, enforced in WifiManager::_startAP()).
+  if (wifiManager.begin("Opel-Radio", "OpelRadio1935")) {
     if (webServer.begin(80)) {
       webInitialized = true;
       Serial.println(F("[WEB] Server ready"));
@@ -217,17 +232,37 @@ void loop() {
     wifiManager.loop();
   }
 
-  // Periodic config save (debounced)
+  // Periodic config save (debounced by interval, and only actually written
+  // to flash if something changed since the last save).
   if (radioInitialized && millis() - lastConfigSaveMs > CONFIG_SAVE_INTERVAL_MS) {
     lastConfigSaveMs = millis();
     RadioConfig config = radioService.getConfig();
-    radioStore.saveConfig(config);
-    
-    // Also save station list if we have one
+    if (!configEverSaved || config != lastSavedConfig) {
+      radioStore.saveConfig(config);
+      lastSavedConfig = config;
+      configEverSaved = true;
+    }
+
+    // Also save station list if we have one and it actually changed
+    // (e.g. a new scan completed or a favorite was toggled).
     size_t count = 0;
     const RadioStation* stations = radioService.getStations(count);
-    if (count > 0) {
+    bool stationsChanged = !stationsEverSaved || count != lastSavedStationCount;
+    if (!stationsChanged) {
+      for (size_t i = 0; i < count; i++) {
+        if (!stationPersistEquals(stations[i], lastSavedStations[i])) {
+          stationsChanged = true;
+          break;
+        }
+      }
+    }
+    if (count > 0 && stationsChanged) {
       radioStore.saveStations(stations, count);
+      for (size_t i = 0; i < count; i++) {
+        lastSavedStations[i] = stations[i];
+      }
+      lastSavedStationCount = count;
+      stationsEverSaved = true;
     }
   }
 

@@ -11,6 +11,7 @@
 class Elm327Server {
  public:
   Elm327Server(VehicleState& vehicleState, const char* ssid, const char* password, uint16_t tcpPort);
+  ~Elm327Server();
 
   void begin();
   void update();

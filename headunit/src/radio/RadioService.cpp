@@ -10,8 +10,6 @@
 
 namespace {
 constexpr uint8_t SI470X_ADDR = 0x10;
-constexpr uint16_t MIN_FREQ = 8750;
-constexpr uint16_t MAX_FREQ = 10800;
 
 // RAII Mutex guard for RadioService thread-safe critical sections
 class MutexGuard {
@@ -35,7 +33,7 @@ private:
 }
 
 RadioService::RadioService() {
-     _status.frequency = MIN_FREQ;
+     _status.frequency = app_config::kMinFrequency10kHz;
      _status.volume = 8;
      // Mutex created in begin() to avoid issues with static initialization
  }
@@ -166,7 +164,7 @@ void RadioService::_stepScan() {
         case ScanState::Idle:
             Serial.println(F("[RADIO::SCAN] Phase: Idle -> SeekStart"));
             _scan.phase = ScanState::SeekStart;
-            _scan.currentFreq = MIN_FREQ;
+            _scan.currentFreq = app_config::kMinFrequency10kHz;
             _scan.stationCount = 0;
             _scan.lastSeekMs = millis();
             Serial.printf("[RADIO::SCAN]   Starting from freq=%u kHz\n", _scan.currentFreq);
@@ -262,12 +260,6 @@ bool RadioService::seekUp() {
      if (_state != RadioState::Idle && _state != RadioState::Seeking) return false;
      _state = RadioState::Seeking;
      _si470x.seek(0, 1);  // seekMode=0 (wrap), direction=1 (up)
-     {
-         MutexGuard guard(_mutex);
-         if (guard.acquired()) {
-             // Just to trigger a status notification with mutex protection
-         }
-     }
      _notifyStatus();
      return true;
 }
@@ -276,12 +268,6 @@ bool RadioService::seekDown() {
      if (_state != RadioState::Idle && _state != RadioState::Seeking) return false;
      _state = RadioState::Seeking;
      _si470x.seek(0, 0);  // seekMode=0 (wrap), direction=0 (down)
-     {
-         MutexGuard guard(_mutex);
-         if (guard.acquired()) {
-             // Just to trigger a status notification with mutex protection
-         }
-     }
      _notifyStatus();
      return true;
 }
@@ -295,7 +281,7 @@ bool RadioService::startScan() {
     Serial.println(F("[RADIO::SCAN] Starting new scan..."));
     _state = RadioState::Scanning;
     _scan.phase = ScanState::Idle;
-    _scan.currentFreq = MIN_FREQ;
+    _scan.currentFreq = app_config::kMinFrequency10kHz;
     _scan.stationCount = 0;
     Serial.printf("[RADIO::SCAN] State changed to Scanning, phase=Idle, freq=%u\n", _scan.currentFreq);
     _notifyScanProgress();
@@ -313,6 +299,23 @@ void RadioService::cancelScan() {
 const RadioStation* RadioService::getStations(size_t& count) const {
     count = _scan.stationCount;
     return _scan.stations;
+}
+
+bool RadioService::setFavorite(uint16_t frequency, bool favorite) {
+    bool found = false;
+    {
+        MutexGuard guard(_mutex);
+        if (!guard.acquired()) return false;
+        for (size_t i = 0; i < _scan.stationCount; i++) {
+            if (_scan.stations[i].frequency == frequency) {
+                _scan.stations[i].favorite = favorite;
+                found = true;
+                break;
+            }
+        }
+    }
+    if (found) _notifyStationList();
+    return found;
 }
 
 bool RadioService::setVolume(uint8_t volume) {
@@ -352,12 +355,16 @@ bool RadioService::setMuted(bool muted) {
 void RadioService::_updateStatusFromHardware() {
     _si470x.getStatus();
 
-    _status.rssi = _si470x.getRssi();
-    _status.stereo = _si470x.isStereo();
-
+    const uint8_t rssi = _si470x.getRssi();
+    const bool stereo = _si470x.isStereo();
     // Frequency in 10kHz steps
-    uint16_t libFreq = _si470x.getFrequency();  // Returns 0.1MHz steps
-    _status.frequency = libFreq * 10;
+    const uint16_t frequency = _si470x.getFrequency() * 10;  // lib returns 0.1MHz steps
+
+    MutexGuard guard(_mutex);
+    if (!guard.acquired()) return;
+    _status.rssi = rssi;
+    _status.stereo = stereo;
+    _status.frequency = frequency;
 }
 
 void RadioService::_pollRds() {
@@ -366,25 +373,28 @@ void RadioService::_pollRds() {
     _lastRdsPollMs = millis();
 
     if (_si470x.getRdsReady()) {
-        // Program Service (PS) - station name from RDS 0A
-        char* ps = _si470x.getRdsText0A();
-        if (ps && ps[0] != '\0') {
-            if (strcmp(ps, _status.programService) != 0) {
+        bool changed = false;
+        {
+            MutexGuard guard(_mutex);
+            if (!guard.acquired()) return;
+
+            // Program Service (PS) - station name from RDS 0A
+            char* ps = _si470x.getRdsText0A();
+            if (ps && ps[0] != '\0' && strcmp(ps, _status.programService) != 0) {
                 strncpy(_status.programService, ps, 8);
                 _status.programService[8] = '\0';
-                _notifyStatus();
+                changed = true;
             }
-        }
 
-        // RadioText (RT) - song info etc. from RDS 2A
-        char* rt = _si470x.getRdsText2A();
-        if (rt && rt[0] != '\0') {
-            if (strcmp(rt, _status.radioText) != 0) {
+            // RadioText (RT) - song info etc. from RDS 2A
+            char* rt = _si470x.getRdsText2A();
+            if (rt && rt[0] != '\0' && strcmp(rt, _status.radioText) != 0) {
                 strncpy(_status.radioText, rt, 64);
                 _status.radioText[64] = '\0';
-                _notifyStatus();
+                changed = true;
             }
         }
+        if (changed) _notifyStatus();
     }
 }
 
@@ -437,7 +447,7 @@ bool RadioService::_scanStoreStation() {
         return false;
     }
 
-    if (_scan.stationCount < 50) {
+    if (_scan.stationCount < app_config::kMaxStations) {
         RadioStation& st = _scan.stations[_scan.stationCount];
         st.frequency = freq;
         st.rssi = rssi;
@@ -446,7 +456,10 @@ bool RadioService::_scanStoreStation() {
         st.radioText[0] = '\0';
         st.favorite = false;
         _scan.stationCount++;
-        _status.scanCount = _scan.stationCount;
+        {
+            MutexGuard guard(_mutex);
+            if (guard.acquired()) _status.scanCount = _scan.stationCount;
+        }
         Serial.printf("[RADIO::SCAN::STORE] ✓ STORED station #%u at %.2f MHz\n", 
             _scan.stationCount, freq / 100.0f);
         _notifyStationList();
@@ -460,11 +473,11 @@ void RadioService::_scanNextSeek() {
     _scan.currentFreq += 5;  // 50kHz = 5 * 10kHz steps
 
     Serial.printf("[RADIO::SCAN::NEXSEEK] currentFreq now=%u, MAX_FREQ=%u, comparison: %u > %u = %s\n",
-        _scan.currentFreq, MAX_FREQ, _scan.currentFreq, MAX_FREQ,
-        (_scan.currentFreq > MAX_FREQ) ? "TRUE" : "FALSE");
+        _scan.currentFreq, app_config::kMaxFrequency10kHz, _scan.currentFreq, app_config::kMaxFrequency10kHz,
+        (_scan.currentFreq > app_config::kMaxFrequency10kHz) ? "TRUE" : "FALSE");
 
-    if (_scan.currentFreq > MAX_FREQ) {
-        Serial.printf("[RADIO::SCAN] Reached MAX_FREQ (%u), setting Complete phase\n", MAX_FREQ);
+    if (_scan.currentFreq > app_config::kMaxFrequency10kHz) {
+        Serial.printf("[RADIO::SCAN] Reached MAX_FREQ (%u), setting Complete phase\n", app_config::kMaxFrequency10kHz);
         _scan.phase = ScanState::Complete;
     } else {
         Serial.printf("[RADIO::SCAN] Moving to next seek frequency: %.2f MHz\n", _scan.currentFreq / 100.0f);
@@ -472,19 +485,25 @@ void RadioService::_scanNextSeek() {
         _scan.lastSeekMs = millis();
     }
 
-    _status.scanProgress = static_cast<uint8_t>(
-        ((_scan.currentFreq - MIN_FREQ) * 100) / (MAX_FREQ - MIN_FREQ)
+    const uint8_t scanProgress = static_cast<uint8_t>(
+        ((_scan.currentFreq - app_config::kMinFrequency10kHz) * 100) / (app_config::kMaxFrequency10kHz - app_config::kMinFrequency10kHz)
     );
+    {
+        MutexGuard guard(_mutex);
+        if (guard.acquired()) _status.scanProgress = scanProgress;
+    }
     Serial.printf("[RADIO::SCAN] Progress: %u%% (%u stations found)\n", 
-        _status.scanProgress, _scan.stationCount);
+        scanProgress, _scan.stationCount);
     _notifyScanProgress();
 }
 
 void RadioService::_scanComplete() {
     Serial.printf("[RADIO::SCAN] _scanComplete() called, total stations: %u\n", _scan.stationCount);
     
-    // Sort stations by frequency
-    for (size_t i = 0; i < _scan.stationCount - 1; i++) {
+    // Sort stations by frequency. Guard against stationCount == 0: since
+    // stationCount is unsigned, "stationCount - 1" would otherwise wrap
+    // around to SIZE_MAX and walk far past the end of the stations array.
+    for (size_t i = 0; i + 1 < _scan.stationCount; i++) {
         for (size_t j = i + 1; j < _scan.stationCount; j++) {
             if (_scan.stations[i].frequency > _scan.stations[j].frequency) {
                 RadioStation tmp = _scan.stations[i];
@@ -497,7 +516,10 @@ void RadioService::_scanComplete() {
     Serial.println(F("[RADIO::SCAN] Scan complete - stations sorted, resetting state to Idle"));
     _state = RadioState::Idle;
     _scan.phase = ScanState::Idle;
-    _status.scanProgress = 100;
+    {
+        MutexGuard guard(_mutex);
+        if (guard.acquired()) _status.scanProgress = 100;
+    }
     Serial.printf("[RADIO::SCAN] State reset: RadioState=%d, ScanState=%d\n", (int)_state, (int)_scan.phase);
     _notifyScanProgress();
     _notifyStationList();
@@ -514,7 +536,21 @@ bool RadioService::_isDuplicateFrequency(uint16_t freq) const {
 }
 
 void RadioService::_notifyStatus() {
+    // Keep the RadioState mirrored into _status right before every
+    // notification/read: _state is the authoritative state machine value,
+    // but _status (the struct actually exposed to WebServer/RadioScreen)
+    // never had it assigned anywhere, so external consumers always saw the
+    // default RadioState::Off regardless of the real state.
+    {
+        MutexGuard guard(_mutex);
+        if (guard.acquired()) _status.state = _state;
+    }
     if (_statusCallback) _statusCallback(_status);
+}
+
+RadioStatus RadioService::getStatus() const {
+    MutexGuard guard(_mutex);
+    return _status;
 }
 
 void RadioService::_notifyStationList() {

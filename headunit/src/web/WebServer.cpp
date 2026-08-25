@@ -13,11 +13,13 @@
 
 namespace {
 
-// All inline assets are kept below ~5 KB so every response fits into the TCP
-// send buffer in one shot: AsyncBasicResponse reliably delivers small bodies,
-// while both the Basic continuation (>5.7 KB stall) and the chunked path
-// (missing/garbled framing observed on the wire) proved unreliable with
-// ESPAsyncWebServer 3.12.0 + AsyncTCP 3.5.0 in AP mode.
+// Inline HTML/CSS/JS assets. These used to be kept artificially small and
+// minified to stay under ~5.7 KB per response, working around a send-buffer
+// accounting bug in ESPAsyncWebServer (upstream #315, fixed in #316 - see
+// the pinned commit in platformio.ini). With that fix in place, responses
+// of any size are delivered correctly, so there is no longer a hard size
+// ceiling here; the assets stay minified purely to save flash/RAM, not to
+// dodge a transport bug.
 
 }  // namespace
 
@@ -26,6 +28,11 @@ WebServer::WebServer(RadioService& radioService, WifiManager& wifiManager)
 }
 
 WebServer::~WebServer() {
+    // Deletion order matters here: AsyncWebServer::addHandler() stores a raw
+    // pointer to _events but does not take ownership of it (ESPAsyncWebServer
+    // never frees handlers registered this way), so _events must be deleted
+    // by us - and only after _server is gone, in case its own teardown still
+    // touches registered handlers.
     if (_server) {
         delete _server;
         _server = nullptr;
@@ -82,8 +89,10 @@ void WebServer::_registerJsonPost(const char* uri, JsonBodyHandler handler) {
     // ESPAsyncWebServer calls the onBody callback per chunk and onRequest only
     // after the complete request (headers + full body) has been received.
     // The accumulated body therefore lives in request->_tempObject between
-    // both callbacks. Note: if a client aborts mid-transfer, that one small
-    // String leaks - acceptable here because bodies are < 300 bytes.
+    // both callbacks. If a client aborts mid-transfer, onRequest never runs,
+    // so onDisconnect() frees any body accumulated so far instead of leaking
+    // it (relevant since this device is reachable from an open WiFi AP,
+    // where repeated abort requests could otherwise leak heap over time).
     _server->on(uri, HTTP_POST,
         [handler](AsyncWebServerRequest* request) {
             String* body = static_cast<String*>(request->_tempObject);
@@ -109,6 +118,10 @@ void WebServer::_registerJsonPost(const char* uri, JsonBodyHandler handler) {
             (void)total;
             if (request->_tempObject == nullptr) {
                 request->_tempObject = new String();
+                request->onDisconnect([request]() {
+                    delete static_cast<String*>(request->_tempObject);
+                    request->_tempObject = nullptr;
+                });
             }
             static_cast<String*>(request->_tempObject)->concat(reinterpret_cast<const char*>(data), len);
         });
@@ -239,26 +252,18 @@ void WebServer::_setupRestEndpoints() {
     _registerJsonPost("/api/radio/favorite", [this](AsyncWebServerRequest* request, const JsonDocument& doc) {
         uint16_t freq = doc["frequency"] | 0;
         bool fav = doc["favorite"] | false;
-        (void)fav;
 
-        // Update station in scan list
-        size_t count = 0;
-        const RadioStation* stations = _radioService.getStations(count);
-        for (size_t i = 0; i < count; i++) {
-            if (stations[i].frequency == freq) {
-                // Note: stations array is const from getStations, would need mutable access
-                // For now just acknowledge
-                break;
-            }
+        if (_radioService.setFavorite(freq, fav)) {
+            _sendJson(request, 200, "{\"success\":true}");
+        } else {
+            _sendJson(request, 404, "{\"error\":\"Station not found\"}");
         }
-
-        _sendJson(request, 200, "{\"success\":true}");
     });
 
     // GET/POST /api/radio/config
     _server->on("/api/radio/config", HTTP_GET, [this](AsyncWebServerRequest* request) {
         RadioConfig config = _radioService.getConfig();
-        StaticJsonDocument<300> doc;
+        JsonDocument doc;
         doc["lastFrequency"] = config.lastFrequency;
         doc["lastVolume"] = volumeHardwareToPercent(config.lastVolume);
         doc["lastMuted"] = config.lastMuted;
@@ -293,7 +298,9 @@ void WebServer::_setupRestEndpoints() {
         _sendJson(request, 200, "{\"success\":true}");
     });
 
-    // WiFi STA connect endpoint
+    // WiFi STA connect endpoint. connectSta() no longer blocks (see
+    // WifiManager::connectSta()), so this responds immediately with
+    // "connecting" - poll GET /api/wifi/status for the actual outcome.
     _registerJsonPost("/api/wifi/connect", [this](AsyncWebServerRequest* request, const JsonDocument& doc) {
         const char* ssid = doc["ssid"] | "";
         const char* password = doc["password"] | "";
@@ -303,15 +310,28 @@ void WebServer::_setupRestEndpoints() {
             return;
         }
 
-        bool success = _wifiManager.connectSta(ssid, password);
-        StaticJsonDocument<200> resp;
-        resp["success"] = success;
-        if (success) {
+        _wifiManager.connectSta(ssid, password);
+        _sendJson(request, 202, "{\"success\":true,\"status\":\"connecting\"}");
+    });
+
+    // GET /api/wifi/status - poll target for the outcome of connectSta().
+    _server->on("/api/wifi/status", HTTP_GET, [this](AsyncWebServerRequest* request) {
+        const char* stateStr = "idle";
+        switch (_wifiManager.getStaConnectionState()) {
+            case WifiManager::StaConnectionState::Connecting: stateStr = "connecting"; break;
+            case WifiManager::StaConnectionState::Connected:  stateStr = "connected";  break;
+            case WifiManager::StaConnectionState::Failed:     stateStr = "failed";     break;
+            case WifiManager::StaConnectionState::Idle:       stateStr = "idle";       break;
+        }
+        JsonDocument resp;
+        resp["state"] = stateStr;
+        resp["connected"] = _wifiManager.isStaConnected();
+        if (_wifiManager.isStaConnected()) {
             resp["ip"] = _wifiManager.getStaIP().toString();
         }
         String json;
         serializeJson(resp, json);
-        AsyncWebServerResponse* response = request->beginResponse(success ? 200 : 400, "application/json", json);
+        AsyncWebServerResponse* response = request->beginResponse(200, "application/json", json);
         _addCorsHeaders(response);
         request->send(response);
     });
@@ -379,7 +399,7 @@ void WebServer::broadcastScanProgress(uint8_t progress, uint8_t count, bool scan
 }
 
 String WebServer::_statusToJson(const RadioStatus& status) {
-    StaticJsonDocument<512> doc;
+    JsonDocument doc;
     doc["state"] = static_cast<int>(status.state);
     doc["frequency"] = status.frequency;
     doc["frequencyMHz"] = status.frequency / 100.0;
@@ -398,10 +418,10 @@ String WebServer::_statusToJson(const RadioStatus& status) {
 }
 
 String WebServer::_stationListToJson(const RadioStation* stations, size_t count) {
-    StaticJsonDocument<2048> doc;
+    JsonDocument doc;
     JsonArray arr = doc.to<JsonArray>();
     for (size_t i = 0; i < count; i++) {
-        JsonObject obj = arr.createNestedObject();
+        JsonObject obj = arr.add<JsonObject>();
         obj["frequency"] = stations[i].frequency;
         obj["frequencyMHz"] = stations[i].frequency / 100.0;
         obj["programService"] = stations[i].programService;
@@ -416,7 +436,7 @@ String WebServer::_stationListToJson(const RadioStation* stations, size_t count)
 }
 
 String WebServer::_scanProgressToJson(uint8_t progress, uint8_t count, bool scanning) {
-    StaticJsonDocument<128> doc;
+    JsonDocument doc;
     doc["progress"] = progress;
     doc["count"] = count;
     doc["scanning"] = scanning;

@@ -4,6 +4,9 @@
 //
 
 #include <stdint.h>
+#include <string.h>
+
+#include "config/AppConfig.h"
 
 enum class RadioState {
     Off,
@@ -47,8 +50,31 @@ inline bool operator==(const RadioStation& a, const RadioStation& b) {
     return a.frequency == b.frequency;
 }
 
+// Full field-wise equality of everything RadioStore actually persists (not
+// just the frequency, unlike operator== above). Used by main.cpp to detect
+// whether the station list needs to be re-saved to flash.
+inline bool stationPersistEquals(const RadioStation& a, const RadioStation& b) {
+    return a.frequency == b.frequency && a.favorite == b.favorite && a.rssi == b.rssi &&
+           a.stereo == b.stereo && strcmp(a.programService, b.programService) == 0 &&
+           strcmp(a.radioText, b.radioText) == 0;
+}
+
+// Field-wise comparison (not memcmp, to stay correct across struct padding)
+// used by main.cpp to only persist RadioConfig when something actually
+// changed, instead of writing to flash on every periodic save tick.
+inline bool operator==(const RadioConfig& a, const RadioConfig& b) {
+    return a.lastFrequency == b.lastFrequency &&
+           a.lastVolume == b.lastVolume &&
+           a.lastMuted == b.lastMuted &&
+           strcmp(a.staSsid, b.staSsid) == 0 &&
+           strcmp(a.staPassword, b.staPassword) == 0;
+}
+inline bool operator!=(const RadioConfig& a, const RadioConfig& b) {
+    return !(a == b);
+}
+
 inline bool isValidFrequency(uint16_t freq) {
-    return freq >= 8750 && freq <= 10800;
+    return freq >= app_config::kMinFrequency10kHz && freq <= app_config::kMaxFrequency10kHz;
 }
 
 inline uint16_t freqToDisplay(uint16_t freq) {

@@ -43,43 +43,54 @@ void WifiManager::_startAP() {
 }
 
 void WifiManager::loop() {
-    _checkStaConnection();
+    if (_staConnectionState == StaConnectionState::Connecting) {
+        _pollStaConnecting();
+    } else {
+        _checkStaConnection();
+    }
 }
 
 bool WifiManager::connectSta(const char* ssid, const char* password) {
     if (!ssid || strlen(ssid) == 0) return false;
 
-    Serial.print(F("[WIFI] Connecting to STA: "));
+    Serial.print(F("[WIFI] Connecting to STA (async): "));
     Serial.println(ssid);
 
     WiFi.begin(ssid, password ? password : "");
+    _staConnectionState = StaConnectionState::Connecting;
+    _staConnectStartMs = millis();
+    _lastStaConnectPollMs = 0;  // poll immediately on the next loop()
+    return true;
+}
 
-    uint32_t startMs = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - startMs < 20000) {
-        delay(100);
-    }
+void WifiManager::_pollStaConnecting() {
+    if (millis() - _lastStaConnectPollMs < STA_CONNECT_POLL_INTERVAL_MS) return;
+    _lastStaConnectPollMs = millis();
 
     if (WiFi.status() == WL_CONNECTED) {
         _staConnected = true;
+        _staConnectionState = StaConnectionState::Connected;
         Serial.print(F("[WIFI] STA connected, IP: "));
         Serial.println(WiFi.localIP());
-
         if (_staConnectCallback) {
             _staConnectCallback(true, WiFi.localIP());
         }
-        return true;
-    } else {
+        return;
+    }
+
+    if (millis() - _staConnectStartMs > STA_CONNECT_TIMEOUT_MS) {
+        _staConnectionState = StaConnectionState::Failed;
         Serial.println(F("[WIFI] STA connection timeout"));
         if (_staConnectCallback) {
-            _staConnectCallback(false, IPAddress(0,0,0,0));
+            _staConnectCallback(false, IPAddress(0, 0, 0, 0));
         }
-        return false;
     }
 }
 
 void WifiManager::disconnectSta() {
     WiFi.disconnect(true);
     _staConnected = false;
+    _staConnectionState = StaConnectionState::Idle;
     Serial.println(F("[WIFI] STA disconnected"));
 }
 

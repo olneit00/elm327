@@ -208,6 +208,18 @@ Elm327Server::Elm327Server(VehicleState& vehicleState, const char* ssid, const c
       tcpPort_(tcpPort),
       server_(tcpPort) {}
 
+Elm327Server::~Elm327Server() {
+  // begin() is only ever called once at boot in practice (see main.cpp), so
+  // this destructor never actually runs today - but without it, a future
+  // caller that re-constructs/reinitializes Elm327Server would leak the BLE
+  // callback objects and the RX queue on every re-init.
+  delete bleCallbacks_;
+  delete bleServerCallbacks_;
+  if (bleRxQueue_ != nullptr) {
+    vQueueDelete(bleRxQueue_);
+  }
+}
+
 void Elm327Server::begin() {
   resetAdapterState();
 
@@ -626,11 +638,13 @@ String Elm327Server::handleMode01Command(const String& normalizedCommand) {
   }
   const uint8_t pid = static_cast<uint8_t>(pidRaw);
 
+#ifdef ELM_VERBOSE
   Serial.print(F("OBD MODE=01 PID="));
   Serial.println(formatByte(pid));
   Serial.printf("[STATE] VehicleState address=%p\n", static_cast<void*>(&vehicleState_));
   Serial.printf("[ELM STATE] headers=%s dlc=%s spaces=%s\n", headersEnabled_ ? "true" : "false",
                  displayDlcEnabled_ ? "true" : "false", spacesEnabled_ ? "true" : "false");
+#endif
 
   // The first Mode 01 request after ATSP0 (auto) triggers the protocol
   // search. We only ever emulate ISO 15765-4 CAN 11/500 (protocol 6), so the
@@ -664,8 +678,10 @@ String Elm327Server::handleMode09Command(const String& normalizedCommand) {
   }
   const uint8_t pid = static_cast<uint8_t>(pidRaw);
 
+#ifdef ELM_VERBOSE
   Serial.print(F("OBD MODE=09 PID="));
   Serial.println(formatByte(pid));
+#endif
 
   if (pid == 0x00) {
     const uint32_t mask = computeMode09SupportedMask();
@@ -698,13 +714,17 @@ String Elm327Server::buildMode01Response(uint8_t pid) const {
   }
 
   if (pid == 0x05) {
+#ifdef ELM_VERBOSE
     Serial.printf("[OBD] coolantTemperature before conversion=%.2f C\n", vehicleState_.coolantTemperature);
+#endif
     const uint8_t raw = vehicleState_.coolantToObdRaw();
-    Serial.printf("[OBD] coolant raw decimal=%u hex=0x%02X\n", raw, raw);
     const uint8_t data[] = {raw};
     const String response = makeMode01Response(0x05, data, sizeof(data));
+#ifdef ELM_VERBOSE
+    Serial.printf("[OBD] coolant raw decimal=%u hex=0x%02X\n", raw, raw);
     Serial.print(F("[OBD] payload=41 05 "));
     Serial.println(formatByte(raw));
+#endif
     return response;
   }
 
@@ -735,24 +755,32 @@ String Elm327Server::buildMode01Response(uint8_t pid) const {
   }
 
   if (pid == 0x0E) {
+#ifdef ELM_VERBOSE
     Serial.printf("[OBD] ignitionAdvanceDeg=%.2f\n", vehicleState_.ignitionAdvanceDeg);
+#endif
     const uint8_t raw = vehicleState_.ignitionAdvanceToObdRaw();
-    Serial.printf("[OBD] raw=%u / 0x%02X\n", raw, raw);
     const uint8_t data[] = {raw};
     const String response = makeMode01Response(0x0E, data, sizeof(data));
+#ifdef ELM_VERBOSE
+    Serial.printf("[OBD] raw=%u / 0x%02X\n", raw, raw);
     Serial.print(F("[OBD] payload=41 0E "));
     Serial.println(formatByte(raw));
+#endif
     return response;
   }
 
   if (pid == 0x2F) {
+#ifdef ELM_VERBOSE
     Serial.printf("[OBD] fuelPercent=%.2f\n", vehicleState_.fuelPercent);
+#endif
     const uint8_t raw = vehicleState_.fuelToObdRaw();
-    Serial.printf("[OBD] raw=%u / 0x%02X\n", raw, raw);
     const uint8_t data[] = {raw};
     const String response = makeMode01Response(0x2F, data, sizeof(data));
+#ifdef ELM_VERBOSE
+    Serial.printf("[OBD] raw=%u / 0x%02X\n", raw, raw);
     Serial.print(F("[OBD] payload=41 2F "));
     Serial.println(formatByte(raw));
+#endif
     return response;
   }
 
@@ -851,10 +879,12 @@ String Elm327Server::formatObdResponse(uint16_t canId, const uint8_t* payload, s
 String Elm327Server::formatIsoTpResponse(uint16_t canId, const uint8_t* payload, size_t len) const {
   const std::vector<IsoTpFrame> frames = buildIsoTpFrames(payload, len);
 
+#ifdef ELM_VERBOSE
   if (frames.size() > 1) {
     Serial.print(F("ISO-TP: TOTAL LENGTH="));
     Serial.println(len);
   }
+#endif
 
   String result;
   for (size_t i = 0; i < frames.size(); ++i) {
@@ -862,6 +892,7 @@ String Elm327Server::formatIsoTpResponse(uint16_t canId, const uint8_t* payload,
       result += lineEnding();
     }
     const String frameText = formatObdResponse(canId, frames[i].data, frames[i].length);
+#ifdef ELM_VERBOSE
     if (frames.size() > 1) {
       Serial.print(i == 0 ? F("FIRST FRAME=") : F("CONSECUTIVE FRAME "));
       if (i > 0) {
@@ -870,6 +901,7 @@ String Elm327Server::formatIsoTpResponse(uint16_t canId, const uint8_t* payload,
       }
       Serial.println(frameText);
     }
+#endif
     result += frameText;
   }
   return result;
@@ -949,12 +981,16 @@ void Elm327Server::sendResponse(const String& rawCommand, const String& response
   full += lineEnding();
   full += ">";
 
+#ifdef ELM_VERBOSE
   Serial.print(F("ELM RESPONSE=["));
   Serial.print(Elm327Server::escapeForLog(response));
   Serial.println(F("]"));
+#endif
 
   // Diagnostic-only: verify the actual TX stream matches the configured
   // ATL0/ATL1 line ending before it is ever sent. Never mutates `full`.
+  // Kept active outside ELM_VERBOSE since it only prints on a genuine
+  // protocol-framing bug, not on every response.
   if (!linefeedsEnabled_ && full.indexOf('\n') >= 0) {
     Serial.print(F("[ELM ERROR] LF found in TX while ATL0 is active! full=["));
     Serial.print(escapeForLog(full));
@@ -972,6 +1008,7 @@ void Elm327Server::sendResponse(const String& rawCommand, const String& response
     }
   }
 
+#ifdef ELM_VERBOSE
   Serial.print(F("[ELM TX TEXT] \""));
   Serial.print(escapeForLog(full));
   Serial.println(F("\""));
@@ -982,13 +1019,16 @@ void Elm327Server::sendResponse(const String& rawCommand, const String& response
     Serial.print(hex);
   }
   Serial.println();
+#endif
 
   if (activeTransport_ == Transport::WiFi && client_ && client_.connected()) {
     client_.print(full);
   } else if (activeTransport_ == Transport::Ble && bleTxCharacteristic_ != nullptr) {
+#ifdef ELM_VERBOSE
     Serial.print(F("BLE TX=["));
     Serial.print(Elm327Server::escapeForLog(full));
     Serial.println(F("]"));
+#endif
     bleWriteChunked(full);
   }
 }

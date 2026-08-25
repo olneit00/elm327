@@ -6,7 +6,10 @@
 namespace {
 constexpr uint16_t kTcpPort = 35000;
 const char* kAccessPointSsid = "Opel1935";
-const char* kAccessPointPassword = "";
+// An empty password creates an open (unencrypted) AP that anyone in range
+// can join and use to control this emulator or sniff traffic. WPA2 requires
+// at least 8 characters (enforced in Elm327Server::begin()).
+const char* kAccessPointPassword = "Opel1935emu";
 
 VehicleState vehicleState;
 Elm327Server elm327Server(vehicleState, kAccessPointSsid, kAccessPointPassword, kTcpPort);
