@@ -173,6 +173,13 @@ void RadioService::_stepTuning() {
         _updateStatusFromHardware();
         if (_status.rssi > 0 && abs((int)_status.frequency - (int)_config.lastFrequency) < 5) {
             _state = RadioState::Idle;
+            // Fire deferred notifications here on the loop task: the tune
+            // request came from the web/async_tcp task, which must not touch
+            // LVGL or SSE.
+            if (_tuneApplied) {
+                _tuneApplied = false;
+                _notifyStationSelected(_status.frequency, "");
+            }
             _notifyStatus();
         }
     }
@@ -314,8 +321,9 @@ bool RadioService::setFrequency(uint16_t frequency) {
 
      _state = RadioState::Tuning;
      _lastTuneMs = millis();
-     _notifyStatus();
-     _notifyStationSelected(frequency, "");
+     // Deliberately do NOT call _notifyStatus()/station-selected here: this
+     // runs on the async_tcp web task, and LVGL/SSE are not thread-safe. The
+     // loop task fires them once the tune is actually applied in _stepTuning().
      return true;
 }
 
