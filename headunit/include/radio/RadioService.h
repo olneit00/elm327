@@ -126,6 +126,18 @@ private:
     uint32_t _lastTuneMs = 0;
     static constexpr uint32_t TUNE_TIMEOUT_MS = 3000;
 
+    // Pending frequency for async tuning: setFrequency()/nudgeFrequency() are
+    // called from the async_tcp web task and must NOT block on the Si4703 bus
+    // (its setChannel() spins on STC and trips the task watchdog). The request
+    // stores the target here; _stepTuning() applies it in the loop() task.
+    uint16_t _pendingFrequency = 0;
+    bool _tunePending = false;
+    bool _tuneApplied = false;
+
+    // Pending seek start (async, same reason as tuning).
+    bool _seekPending = false;
+    bool _seekUp = true;
+
     // GALA
     float _speedKmh = 0.0f;
     bool _galaEnabled = false;

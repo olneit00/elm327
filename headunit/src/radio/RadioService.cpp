@@ -155,6 +155,16 @@ void RadioService::_stepIdle() {
 }
 
 void RadioService::_stepTuning() {
+    // Apply a queued tune here (loop task) instead of in the web/async_tcp
+    // task, which must not block on the Si4703 STC spin.
+    if (_tunePending) {
+        _tunePending = false;
+        _tuneApplied = true;
+        // Same 10 kHz-step units as RadioStatus.frequency, no conversion.
+        _si470x.setFrequency(_pendingFrequency);
+        _lastTuneMs = millis();
+    }
+
     if (millis() - _lastTuneMs > TUNE_TIMEOUT_MS) {
         Serial.println(F("[RADIO] Tune timeout"));
         _state = RadioState::Idle;
@@ -169,6 +179,15 @@ void RadioService::_stepTuning() {
 }
 
 void RadioService::_stepSeeking() {
+    // Start a queued seek here (loop task) rather than in the web/async_tcp
+    // task, which must not block on the Si4703 seek/STC spin.
+    if (_seekPending) {
+        _seekPending = false;
+        _lastTuneMs = millis();
+        _si470x.seek(0, _seekUp ? 1 : 0);  // seekMode=0 (wrap), direction up/down
+        return;
+    }
+
     _si470x.getStatus();
     if (_si470x.getShadownRegister(0x0A) & 0x01) {  // STC bit in register 0x0A
         {
@@ -284,11 +303,14 @@ bool RadioService::setFrequency(uint16_t frequency) {
          // showing the frequency instead of a stale/wrong station name.
          _status.programService[0] = '\0';
          _status.radioText[0] = '\0';
-     }
 
-// See the comment in _initHardware(): setFrequency() takes the same
-     // 10 kHz-step units as RadioStatus.frequency, no conversion needed.
-     _si470x.setFrequency(frequency);
+         // Queue the tune instead of blocking here: this runs on the
+         // async_tcp web task and the Si4703 setChannel() spins on STC,
+         // which trips the task watchdog. _stepTuning() (loop task) applies it.
+         _pendingFrequency = frequency;
+         _tunePending = true;
+         _tuneApplied = false;
+     }
 
      _state = RadioState::Tuning;
      _lastTuneMs = millis();
@@ -308,16 +330,20 @@ bool RadioService::nudgeFrequency(int step) {
 
 bool RadioService::seekUp() {
      if (_state != RadioState::Idle && _state != RadioState::Seeking) return false;
+     // Queue the seek; actual _si470x.seek() runs in _stepSeeking() (loop
+     // task) so the async_tcp web task never blocks on the STC spin.
+     _seekUp = true;
+     _seekPending = true;
      _state = RadioState::Seeking;
-     _si470x.seek(0, 1);  // seekMode=0 (wrap), direction=1 (up)
      _notifyStatus();
      return true;
 }
 
 bool RadioService::seekDown() {
      if (_state != RadioState::Idle && _state != RadioState::Seeking) return false;
+     _seekUp = false;
+     _seekPending = true;
      _state = RadioState::Seeking;
-     _si470x.seek(0, 0);  // seekMode=0 (wrap), direction=0 (down)
      _notifyStatus();
      return true;
 }
