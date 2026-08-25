@@ -166,9 +166,9 @@ StationSelectedCallback _stationSelectedCallback = nullptr;
     void _stepScanning();
     void _stepScan();
 
-    // Scan helpers
+// Scan helpers
     bool _scanSeekStart();
-    bool _scanSeekWait();
+    int _scanSeekWait();   // 0=noch laufend, 1=Sender gefunden, 2=Seek-Fail (Band zu Ende)
     bool _scanStoreStation();
     void _scanNextSeek();
     void _scanComplete();
