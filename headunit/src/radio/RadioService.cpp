@@ -226,9 +226,19 @@ void RadioService::_stepSeeking() {
     }
 
     _si470x.getStatus();
-    // STC = bit1 (0x02), not bit0 (RDSR). See _scanSeekWait() for the full
-    // explanation of why the old "& 0x01" broke seek/scan on weak signals.
-    if (_si470x.getShadownRegister(0x0A) & 0x02) {  // STC: seek/tune complete
+    // STC ("Seek/Tune Complete") is bit 14 of register 0x0A, not bit 0 or
+    // bit 1. This is documented explicitly in SI470X.h itself ("STC 0Ah[14]
+    // bit", "RDSR 0Ah[15] bit") and matches the si470x_reg0a bitfield
+    // struct's declaration order (RSSI:8, ST:1, BLERA:2, RDSS:1, AFCRL:1,
+    // SF_BL:1, STC:1, RDSR:1 - GCC packs bitfields LSB-first in declaration
+    // order on little-endian targets, so STC lands at bit 14 and RDSR at
+    // bit 15). The library's own getRdsReady()/getRdsSync() read exactly
+    // this struct, confirming the layout. A previous "empirically
+    // confirmed" fix used bit 0/1/2 here instead, which only happened to
+    // work by coincidence (those bits are actually part of the RSSI byte,
+    // bits 7:0) - it broke again once the AGC fix changed the RSSI
+    // distribution enough to change how often those bits happened to be set.
+    if (_si470x.getShadownRegister(0x0A) & 0x4000) {  // STC: seek/tune complete (bit 14)
         {
             // The station just found by seek hasn't had its RDS text
             // decoded yet - clear the previous station's stale text (see
@@ -614,15 +624,16 @@ void RadioService::_pollRds() {
             uint16_t reg0a = _si470x.getShadownRegister(0x0A);
             uint16_t reg0d = _si470x.getShadownRegister(0x0D);
             uint16_t reg0f = _si470x.getShadownRegister(0x0F);
-            // Bit order empirically confirmed via _scanSeekWait()/_stepSeeking()
-            // (see 97d5d23): bit0=RDSR, bit1=STC, bit2=SF/BL, bit4=RDSS - the
-            // reverse of a naive top-down reading of the si470x_reg0a struct
-            // declaration order in SI470X.h. A previous version of this log
-            // line used bit15/bit11 based on that naive reading and was wrong
-            // (it printed STC mislabeled as RDSR, never read real RDSS).
+            // Bit layout per SI470X.h's own doc comments ("STC 0Ah[14] bit",
+            // "RDSR 0Ah[15] bit") and the si470x_reg0a struct declaration
+            // order: bit15=RDSR, bit14=STC, bit13=SF/BL, bit11=RDSS. See
+            // _scanSeekWait()/_stepSeeking() for the full derivation. An
+            // earlier version of this line used bit0/bit4 based on a
+            // seek-path fix that turned out to be testing RSSI bits by
+            // coincidence, not the actual status bits - now corrected.
             Serial.printf("[RDS::DEBUG] no RDS (state=%d freq=%.2fMHz RSSI=%u) reg0A=0x%04X (RDSR=%u RDSS=%u) 0D=0x%04X 0F=0x%04X\n",
                           (int)_state, _status.frequency / 100.0f, _status.rssi,
-                          reg0a, reg0a & 0x01, (reg0a >> 4) & 0x01,
+                          reg0a, (reg0a >> 15) & 0x01, (reg0a >> 11) & 0x01,
                           reg0d, reg0f);
         }
     }
@@ -642,14 +653,14 @@ bool RadioService::_scanSeekStart() {
 
 int RadioService::_scanSeekWait() {
     _si470x.getStatus();
-    // Register 0x0A: Bit0=RDSR, Bit1=STC (Seek/Tune complete), Bit2=SF/BL
-    // (seek fail / band limit). Earlier code tested bit0 (RDSR) as if it were
-    // STC: with a strong antenna RDS traffic happened to keep RDSR high so a
-    // scan seemed to work, but with a weak/detached antenna RDSR stays 0 and
-    // every seek "never finished" -> empty station list.
+    // Register 0x0A bit layout (per SI470X.h's own doc comments - "STC
+    // 0Ah[14] bit", "RDSR 0Ah[15] bit" - and the si470x_reg0a bitfield
+    // struct declaration order): bit15=RDSR, bit14=STC (Seek/Tune complete),
+    // bit13=SF/BL (seek fail / band limit), bit11=RDSS. See _stepSeeking()
+    // for the full explanation.
     const uint16_t reg0a = _si470x.getShadownRegister(0x0A);
-    const bool stcSet  = (reg0a & 0x02) != 0;   // bit 1
-    const bool seekFail = (reg0a & 0x04) != 0;  // bit 2
+    const bool stcSet  = (reg0a & 0x4000) != 0;  // bit 14
+    const bool seekFail = (reg0a & 0x2000) != 0; // bit 13
     if (stcSet) {
         if (seekFail) {
             Serial.printf("[RADIO::SCAN::SEEK] Seek failed (SF/BL): no more valid stations in band\n");
