@@ -137,6 +137,18 @@ void setup() {
                   config.lastMuted ? "yes" : "no");
   }
 
+  // Load persisted station list so it survives a reboot
+  {
+    RadioStation stations[50];
+    size_t count = 0;
+    if (radioStore.loadStations(stations, 50, count) && count > 0) {
+      radioService.setStations(stations, count);
+      Serial.printf("[STORE] Restored %u stations from disk\n", count);
+    } else {
+      Serial.println(F("[STORE] No persisted stations found"));
+    }
+  }
+
   if (!DisplayManager::begin(pins::SCREEN_WIDTH, pins::SCREEN_HEIGHT)) {
     Serial.println(F("[DISPLAY] init failed"));
     while (true) {}
@@ -175,6 +187,14 @@ void setup() {
   radioService.setStationListCallback(onStationList);
   radioService.setScanProgressCallback(onScanProgress);
   radioService.setStationSelectedCallback(onStationSelected);
+
+  // Sync the on-screen clock from RDS time (group 4A) when a station broadcasts it.
+  // MillisClock advances from its seed, so (re)seeding it to the RDS time keeps the
+  // hands on real time between RDS updates.
+  radioService.setTimeCallback([](uint8_t hour, uint8_t minute, uint8_t second) {
+    timeSource.setSeed(TimeOfDay{hour, minute, second});
+    Serial.printf("[CLOCK] RDS time synced: %02u:%02u:%02u\n", hour, minute, second);
+  });
 
   // Initialize WiFi + WebServer
   Serial.println(F("[WEB] Starting WiFi AP + WebServer..."));

@@ -181,6 +181,35 @@ void WebServer::_setupRestEndpoints() {
         }
     });
 
+    // POST /api/radio/frequency (alias for /api/radio/tune, used by the web UI)
+    _registerJsonPost("/api/radio/frequency", [this](AsyncWebServerRequest* request, const JsonDocument& doc) {
+        uint16_t freq = doc["frequency"] | 0;
+        if (!freq || !isValidFrequency(freq)) {
+            _sendJson(request, 400, "{\"error\":\"Invalid frequency\"}");
+            return;
+        }
+
+        if (_radioService.setFrequency(freq)) {
+            _sendJson(request, 200, "{\"success\":true}");
+        } else {
+            _sendJson(request, 500, "{\"error\":\"Tune failed\"}");
+        }
+    });
+
+    // POST /api/radio/nudge - shift frequency by +0.1 MHz (100) or -0.1 MHz (-100)
+    _registerJsonPost("/api/radio/nudge", [this](AsyncWebServerRequest* request, const JsonDocument& doc) {
+        int step = doc["step"] | 0;
+        if (step != 100 && step != -100) {
+            _sendJson(request, 400, "{\"error\":\"Invalid step\"}");
+            return;
+        }
+        if (_radioService.nudgeFrequency(step)) {
+            _sendJson(request, 200, "{\"success\":true}");
+        } else {
+            _sendJson(request, 500, "{\"error\":\"Nudge failed (out of band or radio off)\"}");
+        }
+    });
+
     // POST /api/radio/seek
     _registerJsonPost("/api/radio/seek", [this](AsyncWebServerRequest* request, const JsonDocument& doc) {
         const char* dir = doc["direction"] | "up";
@@ -221,7 +250,9 @@ void WebServer::_setupRestEndpoints() {
     _registerJsonPost("/api/radio/volume", [this](AsyncWebServerRequest* request, const JsonDocument& doc) {
         uint8_t vol = doc["volume"] | 0;
         if (vol > 100) vol = 100;
-        uint8_t hwVol = volumePercentToHardware(vol);
+        // Convert percent (0-100) to hardware scale (0-15), rounded to nearest step
+        // so the echoed value doesn't visibly jump back (floor-truncation drift).
+        uint8_t hwVol = ((vol * 15) + 50) / 100;
 
         if (_radioService.setVolume(hwVol)) {
             _sendJson(request, 200, "{\"success\":true}");
@@ -265,7 +296,8 @@ void WebServer::_setupRestEndpoints() {
         RadioConfig config = _radioService.getConfig();
         JsonDocument doc;
         doc["lastFrequency"] = config.lastFrequency;
-        doc["lastVolume"] = volumeHardwareToPercent(config.lastVolume);
+        // Convert hardware volume (0-15) to percent (0-100)
+        doc["lastVolume"] = (config.lastVolume * 100) / 15;
         doc["lastMuted"] = config.lastMuted;
         doc["staSsid"] = config.staSsid;
         String json;
@@ -281,7 +313,8 @@ void WebServer::_setupRestEndpoints() {
             config.lastFrequency = doc["lastFrequency"] | config.lastFrequency;
         }
         if (!doc["lastVolume"].isNull()) {
-            config.lastVolume = volumePercentToHardware(doc["lastVolume"] | volumeHardwareToPercent(config.lastVolume));
+            uint8_t percent = doc["lastVolume"] | ((config.lastVolume * 100) / 15);
+            config.lastVolume = ((percent * 15) + 50) / 100;
         }
         if (!doc["lastMuted"].isNull()) {
             config.lastMuted = doc["lastMuted"] | config.lastMuted;
@@ -407,7 +440,8 @@ String WebServer::_statusToJson(const RadioStatus& status) {
     doc["radioText"] = status.radioText;
     doc["rssi"] = status.rssi;
     doc["stereo"] = status.stereo;
-    doc["volume"] = volumeHardwareToPercent(status.volume);
+    // Convert hardware volume (0-15) to percent (0-100)
+    doc["volume"] = (status.volume * 100) / 15;
     doc["volumeRaw"] = status.volume;
     doc["muted"] = status.muted;
     doc["scanProgress"] = status.scanProgress;
@@ -453,8 +487,89 @@ void WebServer::_addCorsHeaders(AsyncWebServerResponse* response) {
 
 // HTML/CSS/JS content
 const char* WebServer::_getRadioIndexHtml() {
-    return R"html(<!DOCTYPE html><html lang="de"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=no"><title>Opel Radio</title><style>*{margin:0;padding:0;box-sizing:border-box}:root{--bg:#0a0a0a;--fg:#e0e0e0;--accent:#00cc44;--border:#2a2a2a}body{font-family:sans-serif;background:var(--bg);color:var(--fg);display:flex;flex-direction:column;min-height:100vh}.app{display:flex;flex-direction:column;min-height:100vh;width:100%}.header{padding:16px;background:#121212;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}.header h1{color:var(--accent);font-weight:600;margin:0}.header-buttons{display:flex;gap:8px}.header .btn{padding:8px 12px;font-size:.85rem;min-height:auto}.main{flex:1;padding:16px;overflow-y:auto}.footer{padding:16px;border-top:1px solid var(--border);text-align:center}.btn{padding:14px 24px;border:none;border-radius:8px;font-weight:600;cursor:pointer;min-height:48px}.btn-primary{background:var(--accent);color:#000}.btn-secondary{background:#121212;color:var(--fg);border:1px solid var(--border)}.btn-danger{background:#c41e3a;color:#fff}.station-list{list-style:none}.station-item{display:block;padding:16px;background:#121212;border:1px solid var(--border);border-radius:10px;margin-bottom:10px;cursor:pointer;color:var(--fg);transition:all .2s}.station-item:hover{border-color:var(--accent)}.station-item.current{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent)}.station-name{font-weight:600;margin-bottom:4px}.station-meta{display:flex;gap:12px;font-size:.85rem;color:#888}.volume-section{margin-top:24px;padding:16px;background:#121212;border:1px solid var(--border);border-radius:10px}.volume-slider{width:100%;height:8px;background:var(--border);border-radius:4px;outline:none}.progress-bar{height:8px;background:var(--border);border-radius:4px;overflow:hidden}.progress-fill{height:100%;background:var(--accent);width:0%;transition:width .3s}.hidden{display:none!important}.scan-buttons{display:flex;gap:8px}.scan-buttons .btn{flex:1}.modal{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.8);z-index:1000;align-items:center;justify-content:center}.modal.show{display:flex}.modal-content{background:#121212;border:1px solid var(--border);border-radius:12px;padding:24px;max-width:90%;max-height:80vh;overflow:auto;width:400px}.modal-title{color:var(--accent);font-weight:600;margin-bottom:16px;font-size:1.2rem}.modal-close{float:right;cursor:pointer;font-size:1.5rem;color:var(--fg);background:none;border:none;padding:0}.modal-section{margin-bottom:16px}.modal-label{display:block;margin-bottom:8px;font-weight:600}.modal-input{width:100%;padding:8px;background:#0a0a0a;border:1px solid var(--border);color:var(--fg);border-radius:4px}</style></head><body><div class="app"><header class="header"><h1>Opel Radio</h1><div class="header-buttons"><button id="settings-btn" class="btn btn-secondary" title="Einstellungen">⚙</button></div></header><div class="status-indicators" style="padding:0 16px;display:flex;gap:12px"><span id="wifi-status" class="status-badge">Init...</span><span id="radio-state" class="status-badge">Off</span></div><main class="main"><section class="scan-section"><div class="scan-buttons"><button id="power-btn" class="btn btn-primary">Power ON</button><button id="scan-btn" class="btn btn-primary hidden">Scan starten</button><button id="cancel-scan-btn" class="btn btn-danger hidden">Abbrechen</button></div><div id="scan-progress" class="progress-container" style="display:none;"><div class="progress-bar"><div id="scan-bar" class="progress-fill"></div></div><span id="scan-text">0% - 0 Sender</span></div></section><section class="stations-section"><h2>Sender</h2><ul id="station-list" class="station-list"></ul></section><section class="volume-section"><label for="volume">Lautstärke: <span id="volume-value">8</span>/15</label><input type="range" id="volume" min="0" max="15" value="8" class="volume-slider"></section></main><footer class="footer"><button id="mute-btn" class="btn btn-secondary">Mute</button></footer></div><div id="settings-modal" class="modal"><div class="modal-content"><button class="modal-close" onclick="closeSettings()">&times;</button><h2 class="modal-title">Einstellungen</h2><div class="modal-section"><label class="modal-label">WiFi SSID:</label><input type="text" id="wifi-ssid" class="modal-input" placeholder="SSID"></div><div class="modal-section"><label class="modal-label">WiFi Password:</label><input type="password" id="wifi-pass" class="modal-input" placeholder="Password"></div><div class="modal-section" style="display:flex;gap:8px"><button class="btn btn-primary" onclick="saveSettings()" style="flex:1">Speichern</button><button class="btn btn-secondary" onclick="closeSettings()" style="flex:1">Abbrechen</button></div></div></div><script>const API='/api/radio';const EVENTS='/api/radio/events';let eventSource=null;let currentFreq=0;let isScanning=false;let volumeTimeout=null;function init(){document.getElementById('wifi-status').textContent='Loading...';setupControls();loadInitialData();try{connectSSE()}catch(e){console.error('SSE:',e)}}function connectSSE(){eventSource=new EventSource(EVENTS);eventSource.onopen=function(){var el=document.getElementById('wifi-status');if(el){el.textContent='Verbunden';el.classList.add('connected')}};eventSource.addEventListener('status',(e)=>{const s=JSON.parse(e.data);document.getElementById('radio-state').textContent=['Off','Idle','Tuning','Seeking','Scanning'][s.state]||'?';updateFreq(s.frequency);updateVolDisplay(s.volume);if(document.getElementById('mute-btn'))document.getElementById('mute-btn').textContent=s.muted?'Unmute':'Mute'});eventSource.addEventListener('stations',(e)=>{renderStations(JSON.parse(e.data))});eventSource.addEventListener('scan',(e)=>{try{const scan=JSON.parse(e.data);isScanning=scan.scanning;updateScanUI(scan.progress,scan.count)}catch(e){}});eventSource.onerror=()=>{var el=document.getElementById('wifi-status');if(el)el.textContent='Getrennt';setTimeout(connectSSE,5000)}}function loadInitialData(){fetch(`${API}/status`).then(r=>r.json()).then(s=>{updateFreq(s.frequency);updateVolDisplay(s.volume)}).catch(e=>console.error('status:',e));fetch(`${API}/stations`).then(r=>r.json()).then(renderStations).catch(e=>console.error('stations:',e))}function setupControls(){console.log('[RADIO] binding buttons');var scanBtn=document.getElementById('scan-btn');var cancelBtn=document.getElementById('cancel-scan-btn');if(scanBtn){scanBtn.onclick=()=>{isScanning=true;updateScanUI(0,0);fetch(`${API}/scan/start`,{method:'POST'}).catch(console.error)};console.log('✓ scan-btn')}if(cancelBtn){cancelBtn.onclick=()=>{fetch(`${API}/scan/cancel`,{method:'POST'}).catch(console.error)};console.log('✓ cancel-scan-btn')}var volSlider=document.getElementById('volume');if(volSlider){volSlider.onchange=(e)=>{clearTimeout(volumeTimeout);var percent=parseInt(e.target.value);var hwVol=Math.round(percent*15/100);console.log('[VOLUME] User set to '+percent+'% -> hwVol='+hwVol);fetch(`${API}/volume`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({volume:hwVol})}).catch(console.error)};console.log('✓ volume')}var muteBtn=document.getElementById('mute-btn');if(muteBtn){muteBtn.onclick=()=>{var muted=muteBtn.textContent==='Mute';fetch(`${API}/mute`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({muted})}).catch(console.error)};console.log('✓ mute-btn')}var settingsBtn=document.getElementById('settings-btn');if(settingsBtn){settingsBtn.onclick=openSettings;console.log('✓ settings-btn')}}function openSettings(){document.getElementById('settings-modal').classList.add('show')}function closeSettings(){document.getElementById('settings-modal').classList.remove('show')}function saveSettings(){var ssid=document.getElementById('wifi-ssid').value;var pass=document.getElementById('wifi-pass').value;console.log('Settings saved (placeholder)',ssid,pass);closeSettings()}function updateFreq(freq){currentFreq=freq}function updateVolDisplay(hwVol){var percent=Math.round(hwVol*100/15);var el=document.getElementById('volume-value');var slider=document.getElementById('volume');if(el)el.textContent=percent+'%';if(slider&&slider.value!=percent){slider.value=percent}}function updateScanUI(progress,count){var scanBtn=document.getElementById('scan-btn');var cancelBtn=document.getElementById('cancel-scan-btn');var progressDiv=document.getElementById('scan-progress');if(isScanning){if(scanBtn)scanBtn.classList.add('hidden');if(cancelBtn)cancelBtn.classList.remove('hidden');if(progressDiv)progressDiv.style.display='block'}else{if(scanBtn)scanBtn.classList.remove('hidden');if(cancelBtn)cancelBtn.classList.add('hidden');if(progressDiv)progressDiv.style.display='none'}if(progressDiv){document.getElementById('scan-bar').style.width=progress+'%';document.getElementById('scan-text').textContent=progress+'% - '+count+' Sender'}}function renderStations(stations){const list=document.getElementById('station-list');if(!list)return;list.innerHTML=(stations||[]).map(st=>`<a class="station-item${st.frequency===currentFreq?' current':''}" onclick="selectStation(${st.frequency})"><div class="station-name">${st.programService||((st.frequency/100).toFixed(2)+' MHz')}</div><div class="station-meta"><span>${(st.frequency/100).toFixed(2)} MHz</span><span>${st.stereo?'Stereo':'Mono'}</span><span>RSSI ${st.rssi}</span></div></a>`).join('')}function selectStation(freq){fetch(`${API}/frequency`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({frequency:freq})}).catch(console.error)}document.addEventListener('DOMContentLoaded',init);if(document.readyState!=='loading')init()</script></body></html>)html";
+    return R"html(
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Opel Radio</title>
+    <link rel="stylesheet" href="/radio/style.css">
+</head>
+<body>
+    <div class="app">
+        <header class="header">
+            <h1>Opel Radio</h1>
+            <div class="header-buttons">
+                <button id="settings-btn" class="btn btn-secondary" title="Einstellungen">⚙</button>
+            </div>
+        </header>
+
+        <div class="status-indicators">
+            <span id="wifi-status" class="status-badge">Init...</span>
+            <span id="radio-state" class="status-badge">Off</span>
+        </div>
+
+        <main class="main">
+            <!-- Scan Section -->
+            <section class="scan-section">
+                <div class="scan-buttons">
+                    <button id="scan-btn" class="btn btn-primary">Scan starten</button>
+                    <button id="cancel-scan-btn" class="btn btn-danger hidden">Abbrechen</button>
+                </div>
+                <div id="scan-progress" class="progress-container" style="display:none;">
+                    <div class="progress-bar">
+                        <div id="scan-bar" class="progress-fill"></div>
+                    </div>
+                    <span id="scan-text">0% - 0 Sender</span>
+                </div>
+            </section>
+
+            <!-- Stations Section -->
+            <section class="stations-section">
+                <h2>Sender</h2>
+                <ul id="station-list" class="station-list"></ul>
+            </section>
+
+            <!-- Volume Section -->
+            <section class="volume-section">
+                <label for="volume">Lautstärke: <span id="volume-value">50</span>%</label>
+                <input type="range" id="volume" min="0" max="100" value="50" class="volume-slider">
+            </section>
+        </main>
+
+        <footer class="footer">
+            <button id="mute-btn" class="btn btn-secondary">Mute</button>
+        </footer>
+    </div>
+
+    <!-- Settings Modal -->
+    <div id="settings-modal" class="modal">
+        <div class="modal-content">
+            <button class="modal-close" onclick="closeSettings()">&times;</button>
+            <h2 class="modal-title">Einstellungen</h2>
+            <div class="modal-section">
+                <label class="modal-label">WiFi SSID:</label>
+                <input type="text" id="wifi-ssid" class="modal-input" placeholder="SSID">
+            </div>
+            <div class="modal-section">
+                <label class="modal-label">WiFi Password:</label>
+                <input type="password" id="wifi-pass" class="modal-input" placeholder="Password">
+            </div>
+            <div class="modal-section" style="display:flex;gap:8px">
+                <button class="btn btn-primary" onclick="saveSettings()" style="flex:1">Speichern</button>
+                <button class="btn btn-secondary" onclick="closeSettings()" style="flex:1">Abbrechen</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/radio/app.js"></script>
+</body>
+</html>
+)html";
 }
+
+
 
 const char* WebServer::_getStationHtml() {
     return R"html(
@@ -520,9 +635,622 @@ const char* WebServer::_getStationHtml() {
 }
 
 const char* WebServer::_getStyleCss() {
-    return R"css(*{margin:0;padding:0;box-sizing:border-box}:root{--bg:#0a0a0a;--fg:#e0e0e0;--accent:#00cc44;--border:#2a2a2a}body{font-family:sans-serif;background:var(--bg);color:var(--fg);display:flex;flex-direction:column;min-height:100vh}.app{display:flex;flex-direction:column;min-height:100vh;width:100%}.header{padding:16px;background:#121212;border-bottom:1px solid var(--border);sticky;top:0}.header h1{color:var(--accent);font-weight:600}.status-badge{font-size:.7rem;padding:4px 8px;background:var(--border);border-radius:4px}.status-badge.connected{background:var(--accent);color:#000}.main{flex:1;padding:16px;overflow-y:auto}.footer{padding:16px;border-top:1px solid var(--border)}.btn{padding:14px 24px;border:none;border-radius:8px;font-weight:600;cursor:pointer;min-height:48px}.btn-primary{background:var(--accent);color:#000}.btn-secondary{background:#121212;color:var(--fg);border:1px solid var(--border)}.btn-large{width:100%;padding:18px}.station-list{list-style:none}.station-item{display:block;padding:16px;background:#121212;border:1px solid var(--border);border-radius:10px;margin-bottom:10px;text-decoration:none;color:var(--fg)}.station-item.current{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent)}.station-name{font-weight:600;margin-bottom:4px}.station-meta{display:flex;gap:12px;font-size:.85rem;color:#888}.volume-section{margin-top:24px;padding:16px;background:#121212;border:1px solid var(--border);border-radius:10px}.volume-slider{width:100%;height:8px;background:var(--border);border-radius:4px;outline:none}.progress-bar{height:8px;background:var(--border);border-radius:4px;overflow:hidden}.progress-fill{height:100%;background:var(--accent);width:0%;transition:width .3s}.frequency{font-size:3rem;font-weight:700;color:var(--accent);margin-bottom:8px;font-family:monospace}.hidden{display:none!important}.station-view .main{display:flex;flex-direction:column;align-items:center;text-align:center})css";
+    return R"css(
+/* Root colors */
+:root {
+    --bg: #0a0a0a;
+    --fg: #e0e0e0;
+    --accent: #00cc44;
+    --border: #2a2a2a;
 }
 
-const char* WebServer::_getAppJs() {
-    return R"js(const API='/api/radio';const EVENTS='/api/radio/events';let eventSource=null;let currentFreq=0;function init(){setupControls();loadInitialData();try{connectSSE()}catch(e){console.error('SSE init failed:',e)}}function connectSSE(){eventSource=new EventSource(EVENTS);eventSource.onopen=function(){var el=document.getElementById('wifi-status');if(el){el.textContent='Verbunden';el.classList.add('connected')}};eventSource.addEventListener('status',(e)=>{const s=JSON.parse(e.data);document.getElementById('radio-state').textContent=['Off','Idle','Tuning','Seeking','Scanning'][s.state]||'?';updateFreq(s.frequency);updateVolDisplay(s.volume*100/15);if(document.getElementById('mute-btn'))document.getElementById('mute-btn').textContent=s.muted?'Unmute':'Mute'});eventSource.addEventListener('stations',(e)=>{renderStations(JSON.parse(e.data))});eventSource.onerror=()=>{var el=document.getElementById('wifi-status');if(el)el.textContent='Getrennt';setTimeout(connectSSE,5000)}}function loadInitialData(){fetch(`${API}/status`).then(r=>r.json()).then(s=>{updateFreq(s.frequency);updateVolDisplay(s.volume*100/15)}).catch(e=>console.error('status fetch error:',e));fetch(`${API}/stations`).then(r=>r.json()).then(renderStations).catch(e=>console.error('stations fetch error:',e))}function setupControls(){var scanBtn=document.getElementById('scan-btn');if(scanBtn){scanBtn.onclick=()=>fetch(`${API}/scan/start`,{method:'POST'}).catch(console.error);console.log('[RADIO] scan-btn bound')}else{console.error('[RADIO] scan-btn NOT FOUND')}var volSlider=document.getElementById('volume');if(volSlider){volSlider.onchange=(e)=>fetch(`${API}/volume`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({volume:parseInt(e.target.value)})}).catch(console.error);console.log('[RADIO] volume slider bound')}else{console.error('[RADIO] volume slider NOT FOUND')}var muteBtn=document.getElementById('mute-btn');if(muteBtn){muteBtn.onclick=()=>{var muted=muteBtn.textContent==='Mute';fetch(`${API}/mute`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({muted})}).catch(console.error)};console.log('[RADIO] mute-btn bound')}else{console.error('[RADIO] mute-btn NOT FOUND')}}function updateFreq(freq){currentFreq=freq;const el=document.getElementById('frequency');if(el)el.textContent=(freq/100).toFixed(2)+' MHz'}function updateVolDisplay(vol){const el=document.getElementById('volume-value');if(el)el.textContent=Math.round(vol)+'%'}function renderStations(stations){const list=document.getElementById('station-list');if(!list)return;list.innerHTML=(stations||[]).map(st=>`<a href="/radio/station?freq=${st.frequency}" class="station-item${st.frequency===currentFreq?' current':''}" data-freq="${st.frequency}"><div class="station-name">${st.programService||((st.frequency/100).toFixed(2)+' MHz')}</div><div class="station-meta"><span>${(st.frequency/100).toFixed(2)} MHz</span><span>${st.stereo?'Stereo':'Mono'}</span></div></a>`).join('')}function bootOnce(){if(window.__radioBooted)return;window.__radioBooted=true;console.log('[RADIO] init() starting');init()}if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',bootOnce);console.log('[RADIO] waiting for DOMContentLoaded')}else{console.log('[RADIO] DOM ready, init now');bootOnce()})js";
+/* Base styles */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
 }
+
+body {
+    font-family: sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+}
+
+/* Layout */
+.app {
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+    width: 100%;
+}
+
+.header {
+    padding: 16px;
+    background: #121212;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.header h1 {
+    color: var(--accent);
+    font-weight: 600;
+    margin: 0;
+}
+
+.header-buttons {
+    display: flex;
+    gap: 8px;
+}
+
+.header .btn {
+    padding: 8px 12px;
+    font-size: 0.85rem;
+    min-height: auto;
+}
+
+.status-indicators {
+    padding: 0 16px;
+    display: flex;
+    gap: 12px;
+}
+
+.status-badge {
+    font-size: 0.7rem;
+    padding: 4px 8px;
+    background: var(--border);
+    border-radius: 4px;
+}
+
+.status-badge.connected {
+    background: var(--accent);
+    color: #000;
+}
+
+.main {
+    flex: 1;
+    padding: 16px;
+    overflow-y: auto;
+}
+
+.footer {
+    padding: 16px;
+    border-top: 1px solid var(--border);
+    text-align: center;
+}
+
+/* Buttons */
+.btn {
+    padding: 14px 24px;
+    border: none;
+    border-radius: 8px;
+    font-weight: 600;
+    cursor: pointer;
+    min-height: 48px;
+}
+
+.btn-primary {
+    background: var(--accent);
+    color: #000;
+}
+
+.btn-secondary {
+    background: #121212;
+    color: var(--fg);
+    border: 1px solid var(--border);
+}
+
+.btn-danger {
+    background: #c41e3a;
+    color: #fff;
+}
+
+/* Sections */
+.scan-section {
+    margin-bottom: 24px;
+}
+
+.scan-buttons {
+    display: flex;
+    gap: 8px;
+}
+
+.scan-buttons .btn {
+    flex: 1;
+}
+
+.progress-container {
+    margin-top: 16px;
+}
+
+.progress-bar {
+    height: 8px;
+    background: var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.progress-fill {
+    height: 100%;
+    background: var(--accent);
+    width: 0%;
+    transition: width 0.3s;
+}
+
+#scan-text {
+    display: block;
+    margin-top: 8px;
+    font-size: 0.9rem;
+    color: #888;
+}
+
+/* Stations */
+.stations-section h2 {
+    color: var(--accent);
+    margin-bottom: 12px;
+}
+
+.station-list {
+    list-style: none;
+}
+
+.station-item {
+    display: block;
+    padding: 16px;
+    background: #121212;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    margin-bottom: 10px;
+    cursor: pointer;
+    color: var(--fg);
+    transition: all 0.2s;
+    text-decoration: none;
+}
+
+.station-item:hover {
+    border-color: var(--accent);
+}
+
+.station-item.current {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent);
+}
+
+.station-name {
+    font-weight: 600;
+    margin-bottom: 4px;
+}
+
+.station-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+}
+
+.station-nudge {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.nudge-btn {
+    min-width: 36px;
+    height: 36px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #0a0a0a;
+    color: var(--accent);
+    font-size: 1.1rem;
+    font-weight: 700;
+    cursor: pointer;
+    line-height: 1;
+    padding: 0 10px;
+}
+
+.nudge-btn:active {
+    background: var(--accent);
+    color: #000;
+}
+
+.station-meta {
+    display: flex;
+    gap: 12px;
+    font-size: 0.85rem;
+    color: #888;
+}
+
+/* Volume */
+.volume-section {
+    margin-top: 24px;
+    padding: 16px;
+    background: #121212;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+}
+
+.volume-section label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 600;
+}
+
+.volume-slider {
+    width: 100%;
+    height: 8px;
+    background: var(--border);
+    border-radius: 4px;
+    outline: none;
+    -webkit-appearance: none;
+    appearance: none;
+}
+
+.volume-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 16px;
+    height: 16px;
+    background: var(--accent);
+    cursor: pointer;
+    border-radius: 50%;
+}
+
+.volume-slider::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    background: var(--accent);
+    cursor: pointer;
+    border-radius: 50%;
+    border: none;
+}
+
+/* Modal */
+.modal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.8);
+    z-index: 1000;
+    align-items: center;
+    justify-content: center;
+}
+
+.modal.show {
+    display: flex;
+}
+
+.modal-content {
+    background: #121212;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    max-width: 90%;
+    max-height: 80vh;
+    overflow: auto;
+    width: 400px;
+}
+
+.modal-title {
+    color: var(--accent);
+    font-weight: 600;
+    margin-bottom: 16px;
+    font-size: 1.2rem;
+}
+
+.modal-close {
+    float: right;
+    cursor: pointer;
+    font-size: 1.5rem;
+    color: var(--fg);
+    background: none;
+    border: none;
+    padding: 0;
+}
+
+.modal-section {
+    margin-bottom: 16px;
+}
+
+.modal-label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 600;
+}
+
+.modal-input {
+    width: 100%;
+    padding: 8px;
+    background: #0a0a0a;
+    border: 1px solid var(--border);
+    color: var(--fg);
+    border-radius: 4px;
+}
+
+/* Utilities */
+.hidden {
+    display: none !important;
+}
+)css";
+}
+
+
+
+const char* WebServer::_getAppJs() {
+    return R"js(
+const API = '/api/radio';
+const EVENTS = '/api/radio/events';
+
+let eventSource = null;
+let currentFreq = 0;
+let isScanning = false;
+
+// Initialize on page load
+function init() {
+    document.getElementById('wifi-status').textContent = 'Loading...';
+    setupControls();
+    loadInitialData();
+    try {
+        connectSSE();
+    } catch (e) {
+        console.error('SSE init failed:', e);
+    }
+}
+
+// Connect to Server-Sent Events stream
+function connectSSE() {
+    eventSource = new EventSource(EVENTS);
+    
+    eventSource.onopen = function() {
+        const el = document.getElementById('wifi-status');
+        if (el) {
+            el.textContent = 'Verbunden';
+            el.classList.add('connected');
+        }
+    };
+    
+    eventSource.addEventListener('status', (e) => {
+        const s = JSON.parse(e.data);
+        document.getElementById('radio-state').textContent = 
+            ['Off', 'Idle', 'Tuning', 'Seeking', 'Scanning'][s.state] || '?';
+        updateFreq(s.frequency);
+        updateVolDisplay(s.volume);
+        
+        if (document.getElementById('mute-btn')) {
+            document.getElementById('mute-btn').textContent = 
+                s.muted ? 'Unmute' : 'Mute';
+        }
+    });
+    
+    eventSource.addEventListener('stations', (e) => {
+        renderStations(JSON.parse(e.data));
+    });
+    
+    eventSource.addEventListener('scan', (e) => {
+        try {
+            const scan = JSON.parse(e.data);
+            isScanning = scan.scanning;
+            updateScanUI(scan.progress, scan.count);
+        } catch (e) {}
+    });
+    
+    eventSource.onerror = () => {
+        const el = document.getElementById('wifi-status');
+        if (el) el.textContent = 'Getrennt';
+        setTimeout(connectSSE, 5000);
+    };
+}
+
+// Load initial status and stations from server
+function loadInitialData() {
+    fetch(`${API}/status`)
+        .then(r => r.json())
+        .then(s => {
+            updateFreq(s.frequency);
+            updateVolDisplay(s.volume);
+        })
+        .catch(e => console.error('status fetch error:', e));
+    
+    fetch(`${API}/stations`)
+        .then(r => r.json())
+        .then(renderStations)
+        .catch(e => console.error('stations fetch error:', e));
+}
+
+// Setup button click handlers
+function setupControls() {
+    console.log('[RADIO] binding buttons');
+    
+    // Scan button
+    const scanBtn = document.getElementById('scan-btn');
+    if (scanBtn) {
+        scanBtn.onclick = () => {
+            isScanning = true;
+            updateScanUI(0, 0);
+            fetch(`${API}/scan/start`, { method: 'POST' })
+                .catch(console.error);
+        };
+        console.log('✓ scan-btn bound');
+    } else {
+        console.error('✗ scan-btn NOT FOUND');
+    }
+    
+    // Cancel scan button
+    const cancelBtn = document.getElementById('cancel-scan-btn');
+    if (cancelBtn) {
+        cancelBtn.onclick = () => {
+            fetch(`${API}/scan/cancel`, { method: 'POST' })
+                .catch(console.error);
+        };
+        console.log('✓ cancel-scan-btn bound');
+    }
+    
+    // Volume slider
+    const volSlider = document.getElementById('volume');
+    if (volSlider) {
+        volSlider.onchange = (e) => {
+            const percent = parseInt(e.target.value);
+            console.log('[VOLUME] User set to ' + percent + '%');
+            fetch(`${API}/volume`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ volume: percent })
+            }).catch(console.error);
+        };
+        console.log('✓ volume slider bound');
+    } else {
+        console.error('✗ volume slider NOT FOUND');
+    }
+    
+    // Mute button
+    const muteBtn = document.getElementById('mute-btn');
+    if (muteBtn) {
+        muteBtn.onclick = () => {
+            const muted = muteBtn.textContent === 'Mute';
+            fetch(`${API}/mute`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ muted: muted })
+            }).catch(console.error);
+        };
+        console.log('✓ mute-btn bound');
+    } else {
+        console.error('✗ mute-btn NOT FOUND');
+    }
+    
+    // Settings button
+    const settingsBtn = document.getElementById('settings-btn');
+    if (settingsBtn) {
+        settingsBtn.onclick = openSettings;
+        console.log('✓ settings-btn bound');
+    }
+}
+
+// Settings modal
+function openSettings() {
+    document.getElementById('settings-modal').classList.add('show');
+}
+
+function closeSettings() {
+    document.getElementById('settings-modal').classList.remove('show');
+}
+
+function saveSettings() {
+    const ssid = document.getElementById('wifi-ssid').value;
+    const pass = document.getElementById('wifi-pass').value;
+    console.log('Settings saved (placeholder)', ssid, pass);
+    closeSettings();
+}
+
+// Update current frequency display
+function updateFreq(freq) {
+    currentFreq = freq;
+}
+
+// Update volume display (0-100%)
+function updateVolDisplay(percent) {
+    const el = document.getElementById('volume-value');
+    const slider = document.getElementById('volume');
+    
+    if (el) {
+        el.textContent = percent + '%';
+    }
+    
+    if (slider && slider.value != percent) {
+        slider.value = percent;
+    }
+}
+
+// Update scan progress UI
+function updateScanUI(progress, count) {
+    const scanBtn = document.getElementById('scan-btn');
+    const cancelBtn = document.getElementById('cancel-scan-btn');
+    const progressDiv = document.getElementById('scan-progress');
+    
+    if (isScanning) {
+        if (scanBtn) scanBtn.classList.add('hidden');
+        if (cancelBtn) cancelBtn.classList.remove('hidden');
+        if (progressDiv) progressDiv.style.display = 'block';
+    } else {
+        if (scanBtn) scanBtn.classList.remove('hidden');
+        if (cancelBtn) cancelBtn.classList.add('hidden');
+        if (progressDiv) progressDiv.style.display = 'none';
+    }
+    
+    if (progressDiv) {
+        document.getElementById('scan-bar').style.width = progress + '%';
+        document.getElementById('scan-text').textContent = progress + '% - ' + count + ' Sender';
+    }
+}
+
+// Render station list
+function renderStations(stations) {
+    const list = document.getElementById('station-list');
+    if (!list) return;
+    
+    list.innerHTML = (stations || [])
+        .map(st => {
+            const isCurrentStation = st.frequency === currentFreq;
+            const stationName = st.programService || ((st.frequency / 100).toFixed(2) + ' MHz');
+            const freq = (st.frequency / 100).toFixed(2);
+            const stereo = st.stereo ? 'Stereo' : 'Mono';
+            const rssi = 'RSSI ' + st.rssi;
+            
+            // +/- shift buttons tune to the station, then fine-shift by 0.1 MHz
+            return `<div class="station-item${isCurrentStation ? ' current' : ''}" onclick="selectStation(${st.frequency})">
+                <div class="station-head">
+                    <div class="station-name">${stationName}</div>
+                    <div class="station-nudge">
+                        <button class="nudge-btn" onclick="event.stopPropagation();nudgeFrom(${st.frequency},-100)">−</button>
+                        <button class="nudge-btn" onclick="event.stopPropagation();nudgeFrom(${st.frequency},100)">+</button>
+                    </div>
+                </div>
+                <div class="station-meta">
+                    <span>${freq} MHz</span>
+                    <span>${stereo}</span>
+                    <span>${rssi}</span>
+                </div>
+            </div>`;
+        })
+        .join('');
+}
+
+// Tune to the given frequency first, then shift by step (e.g. 100 = +0.1 MHz)
+function nudgeFrom(baseFreq, step) {
+    fetch(`${API}/frequency`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ frequency: baseFreq })
+    }).then(() => {
+        fetch(`${API}/nudge`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ step: step })
+        }).catch(console.error);
+    }).catch(console.error);
+}
+
+// Select and tune to a station
+function selectStation(freq) {
+    fetch(`${API}/frequency`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ frequency: freq })
+    }).catch(console.error);
+}
+
+// Bind init to DOMContentLoaded
+document.addEventListener('DOMContentLoaded', init);
+if (document.readyState !== 'loading') {
+    init();
+}
+)js";
+}
+

@@ -41,6 +41,7 @@ public:
 
     // Frequency control
     bool setFrequency(uint16_t frequency);  // 8750-10800 (10kHz steps)
+    bool nudgeFrequency(int step);  // +100 or -100 (== +0.1 MHz / -0.1 MHz), keeps within band
     uint16_t getFrequency() const { return _status.frequency; }
 
     // Seek
@@ -53,6 +54,7 @@ public:
     uint8_t getScanProgress() const { return _status.scanProgress; }
     uint8_t getScanCount() const { return _status.scanCount; }
     const RadioStation* getStations(size_t& count) const;
+    void setStations(const RadioStation* stations, size_t count);
 
     // Marks/unmarks a scanned station as favorite by frequency. Returns
     // false if no station with that frequency is currently in the scan
@@ -80,6 +82,8 @@ public:
     String getRadioText() const { return getStatus().radioText; }
 
     // Callbacks for external consumers (WebServer, RadioScreen)
+    using TimeCallback = void (*)(uint8_t hour, uint8_t minute, uint8_t second);
+    void setTimeCallback(TimeCallback cb) { _timeCallback = cb; }
     void setStatusCallback(StatusCallback cb) { _statusCallback = cb; }
     void setStationListCallback(StationListCallback cb) { _stationListCallback = cb; }
     void setScanProgressCallback(ScanProgressCallback cb) { _scanProgressCallback = cb; }
@@ -130,7 +134,8 @@ private:
     StatusCallback _statusCallback = nullptr;
     StationListCallback _stationListCallback = nullptr;
     ScanProgressCallback _scanProgressCallback = nullptr;
-    StationSelectedCallback _stationSelectedCallback = nullptr;
+StationSelectedCallback _stationSelectedCallback = nullptr;
+    TimeCallback _timeCallback = nullptr;
 
     // Internal helpers
     void _notifyStatus();

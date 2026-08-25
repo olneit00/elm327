@@ -113,15 +113,15 @@ bool RadioService::_initHardware() {
     // Initial volume
     _applyVolume();
 
-    // Tune to default frequency. The PU2CLR library's setFrequency()/
+// Tune to default frequency. The PU2CLR library's setFrequency()/
     // getFrequency()/getRealFrequency() all use the exact same 10 kHz-step
     // representation as our own RadioStatus.frequency (e.g. 8750 = 87.50
     // MHz - see startBand[]/endBand[] in SI470X.h and the setFrequency()
-    // docstring "send 10650 for 106.5 MHz"), so no unit conversion is
+    // doc comment "send 10650 for 106.5 MHz"), so no unit conversion is
     // needed or correct here. A previous "/ 10" here (based on an incorrect
     // "library uses 0.1 MHz steps" assumption) caused an unsigned
     // underflow inside the library's channel calculation, silently tuning
-    // to a wrapped/garbage channel instead of the requested frequency.
+    // to a wrong/garbage channel instead of the command.
     _si470x.setFrequency(_status.frequency);
     delay(100);
     _updateStatusFromHardware();
@@ -286,7 +286,7 @@ bool RadioService::setFrequency(uint16_t frequency) {
          _status.radioText[0] = '\0';
      }
 
-     // See the comment in _initHardware(): setFrequency() takes the same
+// See the comment in _initHardware(): setFrequency() takes the same
      // 10 kHz-step units as RadioStatus.frequency, no conversion needed.
      _si470x.setFrequency(frequency);
 
@@ -295,6 +295,15 @@ bool RadioService::setFrequency(uint16_t frequency) {
      _notifyStatus();
      _notifyStationSelected(frequency, "");
      return true;
+}
+
+bool RadioService::nudgeFrequency(int step) {
+    if (step == 0) return false;
+    int16_t target = static_cast<int16_t>(_status.frequency) + step;
+    if (target < app_config::kMinFrequency10kHz || target > app_config::kMaxFrequency10kHz) return false;
+    uint16_t newFreq = static_cast<uint16_t>(target);
+    if (!isValidFrequency(newFreq)) return false;
+    return setFrequency(newFreq);
 }
 
 bool RadioService::seekUp() {
@@ -359,6 +368,21 @@ bool RadioService::setFavorite(uint16_t frequency, bool favorite) {
     return found;
 }
 
+void RadioService::setStations(const RadioStation* stations, size_t count) {
+    if (count > app_config::kMaxStations) count = app_config::kMaxStations;
+    {
+        MutexGuard guard(_mutex);
+        if (!guard.acquired()) return;
+        for (size_t i = 0; i < count; i++) {
+            _scan.stations[i] = stations[i];
+        }
+        _scan.stationCount = count;
+        _status.scanCount = count;
+    }
+    _notifyStationList();
+}
+}
+
 bool RadioService::setVolume(uint8_t volume) {
      if (volume > 15) volume = 15;
 
@@ -402,7 +426,7 @@ void RadioService::_updateStatusFromHardware() {
     // RadioStatus.frequency (see the comment in _initHardware()) - no *10.
     const uint16_t frequency = _si470x.getFrequency();
 
-    MutexGuard guard(_mutex);
+MutexGuard guard(_mutex);
     if (!guard.acquired()) return;
     _status.rssi = rssi;
     _status.stereo = stereo;
@@ -436,12 +460,37 @@ void RadioService::_pollRds() {
                 changed = true;
             }
         }
-        if (changed) _notifyStatus();
+if (changed) _notifyStatus();
+
+        // Clock Time (CT) - real UTC time from RDS group 4A, format "HH:MM +01:00"
+        char* rdsTime = _si470x.getRdsTime();
+        if (rdsTime && rdsTime[0] != '\0' && strlen(rdsTime) >= 5) {
+            int hh = (rdsTime[0] - '0') * 10 + (rdsTime[1] - '0');
+            int mm = (rdsTime[3] - '0') * 10 + (rdsTime[4] - '0');
+            // Apply the local offset from the RDS string (e.g. "+01:00" at chars 6..11)
+            int offsetMinutes = 0;
+            if (strlen(rdsTime) >= 12 && rdsTime[5] != '\0') {
+                char sign = rdsTime[6];
+                int oh = (rdsTime[7] - '0') * 10 + (rdsTime[8] - '0');
+                int om = (rdsTime[10] - '0') * 10 + (rdsTime[11] - '0');
+                offsetMinutes = oh * 60 + om;
+                if (sign == '-') offsetMinutes = -offsetMinutes;
+            }
+            int localMinutes = hh * 60 + mm + offsetMinutes;
+            localMinutes = ((localMinutes % 1440) + 1440) % 1440;
+            uint8_t localHour = localMinutes / 60;
+            uint8_t localMinute = localMinutes % 60;
+            if (_timeCallback) {
+                _timeCallback(localHour, localMinute, 0);
+            }
+            Serial.printf("[RDS::TIME] CT=%s -> local %02u:%02u\n",
+                          rdsTime, localHour, localMinute);
+        }
     }
 }
 
 bool RadioService::_scanSeekStart() {
-    // Start seek from current scan frequency. currentFreq is already in the
+// Start seek from current scan frequency. currentFreq is already in the
     // same 10 kHz-step units setFrequency() expects (see _initHardware()).
     Serial.printf("[RADIO::SCAN::SEEK] Starting seek at %.2f MHz\n", _scan.currentFreq / 100.0f);
     _si470x.setFrequency(_scan.currentFreq);
@@ -470,16 +519,28 @@ bool RadioService::_scanSeekWait() {
 bool RadioService::_scanStoreStation() {
     _si470x.getStatus();
     
-    // Use getRealFrequency() instead of getFrequency()!
-    // getFrequency() returns cached value, getRealFrequency() reads from register.
-    // Both already return 10 kHz-step units - no *10 (see _initHardware()).
-    uint16_t freq = _si470x.getRealFrequency();
+_si470x.getStatus();
+    
+    // Use getRealFrequency() instead of getFrequency()! getFrequency()
+    // returns a cached value while getRealFrequency() reads from the
+    // register. Both already return 10 kHz-step units (no *10 - see
+    // _initHardware()); fall back to the scan cursor if the read returns 0.
+    uint16_t realFreq = _si470x.getRealFrequency();
+    uint16_t freq = (realFreq > 0) ? realFreq : _scan.currentFreq;
     
     uint8_t rssi = _si470x.getRssi();
     bool stereo = _si470x.isStereo();
 
     Serial.printf("[RADIO::SCAN::STORE] getRealFrequency()=%u (%.2f MHz), RSSI=%u, stereo=%s\n", 
         freq, freq / 100.0f, rssi, stereo ? "yes" : "no");
+
+    // Jump the scan cursor past the found station so the next seek continues
+    // upward instead of re-finding this same station. Must happen before any
+    // early return (invalid/duplicate), otherwise the scan stalls at the same
+    // frequencies and never reaches the upper part of the band.
+    if (freq > _scan.currentFreq) {
+        _scan.currentFreq = freq;
+    }
 
     if (!isValidFrequency(freq) || _isDuplicateFrequency(freq)) {
         Serial.printf("[RADIO::SCAN::STORE] Rejected: invalid=%s (freq=%u, range=[8750-10800]), duplicate=%s\n",
