@@ -30,6 +30,21 @@ private:
      SemaphoreHandle_t _mutex;
      bool _acquired = false;
 };
+
+// Even with RDSS ("RDS Synchronized") true, the block error rate (BLERA)
+// can still leave the occasional corrupted byte in decoded PS/RT text -
+// visible in practice as embedded control characters (e.g. SOH 0x01, SI
+// 0x0F) rendered as boxes/mojibake. Reject the whole string rather than
+// display it partially garbled; RDS text is either clean ASCII/Latin-1 or
+// not trustworthy at all for this purpose.
+bool looksLikeValidRdsText(const char* text) {
+    if (text == nullptr) return false;
+    for (const char* p = text; *p != '\0'; ++p) {
+        const uint8_t c = static_cast<uint8_t>(*p);
+        if (c < 0x20 && c != ' ') return false;  // C0 control chars (not the space itself)
+    }
+    return true;
+}
 }
 
 RadioService::RadioService() {
@@ -472,29 +487,44 @@ void RadioService::_pollRds() {
     _lastRdsPollMs = millis();
 
     const bool rdsReady = _si470x.getRdsReady();
+    // RDSR ("RDS ready", reg 0x0A bit 15) only means a group *slot* just
+    // completed - it says nothing about whether that group's bits were
+    // actually decoded correctly. RDSS ("RDS Synchronized", reg 0x0A bit
+    // 11, exposed as getRdsSync()) is the bit that means the decoder has
+    // actually achieved block synchronization on the 57 kHz subcarrier.
+    // Neither our previous code nor the library's own getRdsText0A()/
+    // getRdsText2A()/getRdsTime() ever check RDSS - they trust whatever
+    // bytes are sitting in the block registers the moment RDSR blips true,
+    // even while RDSS=0 (never synchronized). On a weak/noisy signal RDSR
+    // can flip briefly from noise alone while RDSS stays 0 the entire
+    // time, and decoding then "succeeds" against garbage register content
+    // - producing exactly the kind of mangled text ("y SW<garbage>") seen
+    // in practice, instead of no text at all.
+    const bool rdsSynced = _si470x.getRdsSync();
 
     // Rate-limited visibility into whether the tuner is asserting RDS-ready
-    // at all, independent of whether we ever manage to decode text from it.
-    // This distinguishes two very different problems that both look like
-    // "no RDS" from the outside:
-    //   - ready=no, ~always: the Si4703 itself never locks the 57 kHz RDS
-    //     subcarrier on this signal. RDS needs noticeably better SNR than
-    //     plain mono/stereo audio - a station that sounds clear can still
-    //     have zero usable RDS. Most common real causes: too weak/short an
-    //     antenna, poor antenna placement/grounding, or a genuinely
-    //     RDS-free station. This is a hardware/RF issue, not a firmware bug.
-    //   - ready=yes at least sometimes, but text never updates: points at
-    //     our own group-type handling in _pollRds() below, or a library
-    //     issue in getRdsText0A()/getRdsText2A() - worth filing upstream.
+    // and RDS-synchronized at all, independent of whether we ever manage to
+    // decode text from it. Distinguishes three different situations that
+    // all look like "no usable RDS" from the outside:
+    //   - ready=no, ~always: the Si4703 never even sees a group boundary on
+    //     this signal - almost always a hardware/RF issue (weak/short
+    //     antenna, poor placement/grounding), not a firmware bug.
+    //   - ready=yes sometimes but synced=no: groups are arriving but the
+    //     decoder never locks onto the bitstream - borderline signal
+    //     quality. This used to be silently decoded as garbage text before
+    //     the RDSS check below was added.
+    //   - synced=yes but text never updates: a real bug in our group-type
+    //     handling below, or in the library's getRdsText0A()/getRdsText2A()
+    //     - worth filing upstream at that point.
     static uint32_t lastRdsDiagMs = 0;
     if (millis() - lastRdsDiagMs > 5000) {
         lastRdsDiagMs = millis();
-        Serial.printf("[RDS::DIAG] ready=%s rssi=%u stereo=%s freq=%.2f MHz\n",
-                      rdsReady ? "yes" : "no", _status.rssi, _status.stereo ? "yes" : "no",
-                      _status.frequency / 100.0f);
+        Serial.printf("[RDS::DIAG] ready=%s synced=%s rssi=%u stereo=%s freq=%.2f MHz\n",
+                      rdsReady ? "yes" : "no", rdsSynced ? "yes" : "no", _status.rssi,
+                      _status.stereo ? "yes" : "no", _status.frequency / 100.0f);
     }
 
-    if (rdsReady) {
+    if (rdsReady && rdsSynced) {
         bool changed = false;
         {
             MutexGuard guard(_mutex);
@@ -502,7 +532,7 @@ void RadioService::_pollRds() {
 
             // Program Service (PS) - station name from RDS 0A
             char* ps = _si470x.getRdsText0A();
-            if (ps && ps[0] != '\0' && strcmp(ps, _status.programService) != 0) {
+            if (ps && ps[0] != '\0' && looksLikeValidRdsText(ps) && strcmp(ps, _status.programService) != 0) {
                 strncpy(_status.programService, ps, 8);
                 _status.programService[8] = '\0';
                 changed = true;
@@ -510,7 +540,7 @@ void RadioService::_pollRds() {
 
             // RadioText (RT) - song info etc. from RDS 2A
             char* rt = _si470x.getRdsText2A();
-            if (rt && rt[0] != '\0' && strcmp(rt, _status.radioText) != 0) {
+            if (rt && rt[0] != '\0' && looksLikeValidRdsText(rt) && strcmp(rt, _status.radioText) != 0) {
                 strncpy(_status.radioText, rt, 64);
                 _status.radioText[64] = '\0';
                 changed = true;
