@@ -11,6 +11,12 @@ uint32_t MillisTick() { return millis(); }
 
 LGFX lcd;
 
+// Timeout for acquiring the shared LVGL mutex. LVGL operations are
+// normally sub-millisecond; a task still holding the lock after this long
+// is stuck, and it is safer to skip a frame/update than to risk touching
+// LVGL concurrently with whatever is holding it.
+constexpr uint32_t kLvglLockTimeoutMs = 200;
+
 // Partial render buffer (RGB565). 24 lines of a 240-px panel = 11,520 bytes.
 // Sized to fit DRAM alongside the growing WiFi/Radio web-radio stack.
 lv_color_t renderBuffer[pins::SCREEN_WIDTH * 24];
@@ -36,7 +42,34 @@ void FlushCb(lv_display_t* disp, const lv_area_t* area, uint8_t* px_map) {
 
 }  // namespace
 
+SemaphoreHandle_t DisplayManager::_lvglMutex = nullptr;
+
+DisplayManager::Lock::Lock() : _acquired(false) {
+  if (DisplayManager::_lvglMutex != nullptr) {
+    _acquired = xSemaphoreTakeRecursive(DisplayManager::_lvglMutex,
+                                         pdMS_TO_TICKS(kLvglLockTimeoutMs)) == pdTRUE;
+    if (!_acquired) {
+      Serial.println(F("[DISPLAY] LVGL lock timed out - skipping this LVGL access"));
+    }
+  }
+}
+
+DisplayManager::Lock::~Lock() {
+  if (_acquired) {
+    xSemaphoreGiveRecursive(DisplayManager::_lvglMutex);
+  }
+}
+
 bool DisplayManager::begin(unsigned int width, unsigned int height) {
+  // Created before anything else touches LVGL (see class-level comment in
+  // DisplayManager.h); recursive so a function that already holds the
+  // lock can safely call another that also takes one.
+  _lvglMutex = xSemaphoreCreateRecursiveMutex();
+  if (_lvglMutex == nullptr) {
+    Serial.println(F("[DISPLAY] Failed to create LVGL mutex"));
+    return false;
+  }
+
   Serial.println(F("[DISPLAY] init LCD..."));
   if (!lcd.init()) {
     Serial.println(F("[DISPLAY] lcd.init() FAILED"));
@@ -115,4 +148,8 @@ bool DisplayManager::begin(unsigned int width, unsigned int height) {
   return true;
 }
 
-void DisplayManager::tick() { lv_timer_handler(); }
+void DisplayManager::tick() {
+  Lock guard;
+  if (!guard.acquired()) return;
+  lv_timer_handler();
+}

@@ -3,6 +3,7 @@
 #include "assets/clock_face.c"
 #include "assets/needle_clock_hour.c"
 #include "assets/needle_clock_min.c"
+#include "display/DisplayManager.h"
 #include "ui/ClockScreen.h"
 
 namespace {
@@ -56,6 +57,13 @@ void ClockScreen::create() {
       return;
    }
 
+   // create() only ever runs once, from setup() before the web server (and
+   // therefore the async_tcp task) is up, so contention is not expected
+   // here - but taking the lock costs nothing and keeps every LVGL
+   // touchpoint consistent (see DisplayManager::Lock).
+   DisplayManager::Lock guard;
+   if (!guard.acquired()) return;
+
    lv_obj_set_style_bg_color(lv_screen_active(), lv_color_hex(0x101418), 0);
    lv_obj_set_style_bg_opa(lv_screen_active(), LV_OPA_COVER, 0);
 
@@ -105,6 +113,9 @@ void ClockScreen::setVisible(bool visible) {
    if (_visible == visible || secondHand_ == nullptr) return;
    _visible = visible;
 
+   DisplayManager::Lock guard;
+   if (!guard.acquired()) return;
+
    // Toggle visibility of all clock objects without destroying them.
    lv_obj_t* objs[] = {faceImage_, minuteHand_, hourHand_, secondHand_};
    for (lv_obj_t* obj : objs) {
@@ -139,7 +150,12 @@ void ClockScreen::setManualTime(TimeOfDay value, bool enabled) {
 }
 
 void ClockScreen::update() {
-  _applyPendingStationInfo();
+  // Guards every lv_* call below (hand rotation, second hand, station
+  // label) - update() runs on the main loop task, but the shared lock is
+  // still required so it can't interleave with an lv_* call made from
+  // another task (e.g. showStationInfo() reached via a web request).
+  DisplayManager::Lock guard;
+  if (!guard.acquired()) return;
 
   if (_stationLabelVisible && millis() >= _stationLabelHideAtMs) {
     _stationLabelVisible = false;
@@ -171,33 +187,15 @@ void ClockScreen::update() {
 }
 
 void ClockScreen::showStationInfo(const String& text, uint32_t durationMs) {
-  // Callable from any FreeRTOS task (see header comment) - never touches
-  // LVGL here. Only stash the request; _applyPendingStationInfo() (called
-  // from update() on the main loop task) does the actual rendering.
-  portENTER_CRITICAL(&_pendingMux);
-  strlcpy(_pendingStationText, text.c_str(), sizeof(_pendingStationText));
-  _pendingDurationMs = durationMs;
-  _pendingStationInfo = true;
-  portEXIT_CRITICAL(&_pendingMux);
-}
+  if (_stationLabel == nullptr) return;  // create() has not run yet
 
-void ClockScreen::_applyPendingStationInfo() {
-  bool pending;
-  char text[sizeof(_pendingStationText)];
-  uint32_t durationMs;
+  // Callable from any FreeRTOS task (see header comment) - the shared
+  // lock serializes this against update()/tick() running concurrently on
+  // the main loop task.
+  DisplayManager::Lock guard;
+  if (!guard.acquired()) return;
 
-  portENTER_CRITICAL(&_pendingMux);
-  pending = _pendingStationInfo;
-  if (pending) {
-    memcpy(text, _pendingStationText, sizeof(text));
-    durationMs = _pendingDurationMs;
-    _pendingStationInfo = false;
-  }
-  portEXIT_CRITICAL(&_pendingMux);
-
-  if (!pending || _stationLabel == nullptr) return;  // create() has not run yet
-
-  lv_label_set_text(_stationLabel, text);
+  lv_label_set_text(_stationLabel, text.c_str());
   _stationLabelVisible = true;
   _stationLabelHideAtMs = millis() + durationMs;
 

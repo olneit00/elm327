@@ -44,25 +44,17 @@ class ClockScreen {
   // to briefly confirm which station was just selected (tune/seek) without
   // requiring the separate RadioScreen to be visible.
   //
-  // Safe to call from ANY FreeRTOS task: this only stashes the request
-  // behind a short critical section. The actual LVGL calls happen later,
-  // exclusively from update() on the main loop task. LVGL is not
-  // thread-safe, and this is called from RadioService's tune/seek
-  // notification chain, which runs synchronously inside AsyncWebServer
-  // request handlers (the async_tcp task) - calling lv_* functions
-  // directly from here raced with the main loop's continuous
-  // DisplayManager::tick() -> lv_timer_handler() and corrupted LVGL's
-  // internal state, crashing/rebooting the ESP32 (visible as the boot
-  // color-test flash replaying).
+  // Safe to call from ANY FreeRTOS task: acquires the shared
+  // DisplayManager::Lock before touching LVGL (see that class for why -
+  // this is reached from RadioService's tune/seek notification chain,
+  // which runs synchronously inside AsyncWebServer request handlers, i.e.
+  // the async_tcp task, not the main loop task that normally owns LVGL).
   void showStationInfo(const String& text, uint32_t durationMs = 5000);
 
  private:
   void renderFace();
   lv_obj_t* createSecondHand();
   void reorientSecondHand(float angleDeg);
-  // Applies a pending showStationInfo() request via actual LVGL calls.
-  // Only ever invoked from update() (main loop task).
-  void _applyPendingStationInfo();
 
   ITimeSource* source_ = nullptr;
   bool manualEnabled_ = false;
@@ -81,15 +73,6 @@ class ClockScreen {
   lv_obj_t* _stationLabel = nullptr;
   bool _stationLabelVisible = false;
   uint32_t _stationLabelHideAtMs = 0;
-
-  // Cross-task handoff for showStationInfo(): written under _pendingMux by
-  // whichever task calls showStationInfo() (often the async_tcp task via
-  // RadioService's tune/seek callbacks), consumed only by update() on the
-  // main loop task, which then performs the actual LVGL mutation.
-  portMUX_TYPE _pendingMux = portMUX_INITIALIZER_UNLOCKED;
-  volatile bool _pendingStationInfo = false;
-  char _pendingStationText[64] = {0};
-  uint32_t _pendingDurationMs = 5000;
 
   // Last handed-out rotation values in LVGL 0.1 deg units; skips redundant
   // invalidations when a hand did not visibly move.

@@ -6,6 +6,7 @@
 #include <cstdio>
 #include "ui/RadioScreen.h"
 #include "radio/RadioTypes.h"
+#include "display/DisplayManager.h"
 #include <lvgl.h>
 
 // Colors for classic radio look (dark mode with green/orange accents)
@@ -34,6 +35,12 @@ RadioScreen::~RadioScreen() {
 }
 
 void RadioScreen::create() {
+    // Runs once from setup(), before the web server (and its async_tcp
+    // task) is up - see DisplayManager::Lock for why every LVGL touchpoint
+    // takes it regardless.
+    DisplayManager::Lock guard;
+    if (!guard.acquired()) return;
+
     _createContainer();
     _createFrequencyDisplay();
     _createProgramService();
@@ -170,7 +177,14 @@ void RadioScreen::_createVolumeControl() {
 
 void RadioScreen::update(const RadioStatus& status) {
     if (!_visible) return;
-    
+
+    // update() is reached from RadioService's status notification chain,
+    // which - via any /api/radio/* web handler - can run synchronously
+    // inside the async_tcp task rather than the main loop task. See
+    // DisplayManager::Lock for why every LVGL touchpoint must take it.
+    DisplayManager::Lock guard;
+    if (!guard.acquired()) return;
+
     _updateFrequency(status.frequency);
     _updateProgramService(status.programService);
     _updateRadioText(status.radioText);
@@ -183,7 +197,10 @@ void RadioScreen::update(const RadioStatus& status) {
 void RadioScreen::setVisible(bool visible) {
     if (visible == _visible) return;
     _visible = visible;
-    
+
+    DisplayManager::Lock guard;
+    if (!guard.acquired()) return;
+
     if (visible) {
         lv_obj_clear_flag(_container, LV_OBJ_FLAG_HIDDEN);
     } else {
