@@ -50,7 +50,13 @@ bool DisplayManager::begin(unsigned int width, unsigned int height) {
   lcd.setSwapBytes(true);
   Serial.println(F("[DISPLAY] LCD ready"));
 
-  // Direct fillScreen test (known to work)
+#ifdef HEADUNIT_TEST_MODE
+  // Direct fillScreen test (known to work) - bring-up diagnostics only.
+  // Previously ran unconditionally on every boot (production included),
+  // which made a real crash-triggered reset hard to tell apart from a
+  // normal cold boot: both showed this same red/green/red flash. Gating
+  // it behind TEST_MODE (like the LVGL color test further below already
+  // was) keeps that signal meaningful in production.
   lcd.fillScreen(0xF800); // red
   Serial.println(F("[DISPLAY] fillScreen red"));
   delay(300);
@@ -74,6 +80,7 @@ bool DisplayManager::begin(unsigned int width, unsigned int height) {
   lcd.endWrite();
   Serial.println(F("[DISPLAY] pushImage full red"));
   delay(500);
+#endif
 
   // Now test LVGL with non-DMA pushImage flush
   lv_init();

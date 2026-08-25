@@ -139,6 +139,8 @@ void ClockScreen::setManualTime(TimeOfDay value, bool enabled) {
 }
 
 void ClockScreen::update() {
+  _applyPendingStationInfo();
+
   if (_stationLabelVisible && millis() >= _stationLabelHideAtMs) {
     _stationLabelVisible = false;
     if (_stationLabel) {
@@ -169,9 +171,33 @@ void ClockScreen::update() {
 }
 
 void ClockScreen::showStationInfo(const String& text, uint32_t durationMs) {
-  if (_stationLabel == nullptr) return;  // create() has not run yet
+  // Callable from any FreeRTOS task (see header comment) - never touches
+  // LVGL here. Only stash the request; _applyPendingStationInfo() (called
+  // from update() on the main loop task) does the actual rendering.
+  portENTER_CRITICAL(&_pendingMux);
+  strlcpy(_pendingStationText, text.c_str(), sizeof(_pendingStationText));
+  _pendingDurationMs = durationMs;
+  _pendingStationInfo = true;
+  portEXIT_CRITICAL(&_pendingMux);
+}
 
-  lv_label_set_text(_stationLabel, text.c_str());
+void ClockScreen::_applyPendingStationInfo() {
+  bool pending;
+  char text[sizeof(_pendingStationText)];
+  uint32_t durationMs;
+
+  portENTER_CRITICAL(&_pendingMux);
+  pending = _pendingStationInfo;
+  if (pending) {
+    memcpy(text, _pendingStationText, sizeof(text));
+    durationMs = _pendingDurationMs;
+    _pendingStationInfo = false;
+  }
+  portEXIT_CRITICAL(&_pendingMux);
+
+  if (!pending || _stationLabel == nullptr) return;  // create() has not run yet
+
+  lv_label_set_text(_stationLabel, text);
   _stationLabelVisible = true;
   _stationLabelHideAtMs = millis() + durationMs;
 
