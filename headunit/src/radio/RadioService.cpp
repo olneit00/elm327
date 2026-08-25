@@ -510,11 +510,11 @@ void RadioService::_pollRds() {
     _lastRdsPollMs = millis();
 
     const bool rdsReady = _si470x.getRdsReady();
-    // RDSR ("RDS ready", reg 0x0A bit 15) only means a group *slot* just
-    // completed - it says nothing about whether that group's bits were
-    // actually decoded correctly. RDSS ("RDS Synchronized", reg 0x0A bit
-    // 11, exposed as getRdsSync()) is the bit that means the decoder has
-    // actually achieved block synchronization on the 57 kHz subcarrier.
+    // RDSR ("RDS ready") only means a group *slot* just completed - it
+    // says nothing about whether that group's bits were actually decoded
+    // correctly. RDSS ("RDS Synchronized", exposed as getRdsSync()) is the
+    // flag that means the decoder has actually achieved block
+    // synchronization on the 57 kHz subcarrier.
     // Neither our previous code nor the library's own getRdsText0A()/
     // getRdsText2A()/getRdsTime() ever check RDSS - they trust whatever
     // bytes are sitting in the block registers the moment RDSR blips true,
@@ -605,8 +605,8 @@ void RadioService::_pollRds() {
         // Throttled: log roughly every 2s so we can see the radio is in Idle
         // and polling but the current frequency carries no (or no decodable)
         // RDS yet. Include the raw status register (0x0A) so we can see
-        // whether the chip is even synchronizing (RDSS, bit 11) or flagging
-        // RDS-ready (RDSR, bit 15) at the hardware level.
+        // whether the chip is even synchronizing (RDSS) or flagging
+        // RDS-ready (RDSR) at the hardware level.
         static uint32_t lastNoRdsLogMs = 0;
         if (millis() - lastNoRdsLogMs > 2000) {
             lastNoRdsLogMs = millis();
@@ -614,13 +614,15 @@ void RadioService::_pollRds() {
             uint16_t reg0a = _si470x.getShadownRegister(0x0A);
             uint16_t reg0d = _si470x.getShadownRegister(0x0D);
             uint16_t reg0f = _si470x.getShadownRegister(0x0F);
-            // Bit positions per the si470x_reg0a struct (SI470X.h): RDSR is
-            // bit 15, RDSS is bit 11 - NOT bits 15/14 as a previous version
-            // of this log line read them (that accidentally printed STC
-            // mislabeled as RDSR, and never actually read real RDSS at all).
+            // Bit order empirically confirmed via _scanSeekWait()/_stepSeeking()
+            // (see 97d5d23): bit0=RDSR, bit1=STC, bit2=SF/BL, bit4=RDSS - the
+            // reverse of a naive top-down reading of the si470x_reg0a struct
+            // declaration order in SI470X.h. A previous version of this log
+            // line used bit15/bit11 based on that naive reading and was wrong
+            // (it printed STC mislabeled as RDSR, never read real RDSS).
             Serial.printf("[RDS::DEBUG] no RDS (state=%d freq=%.2fMHz RSSI=%u) reg0A=0x%04X (RDSR=%u RDSS=%u) 0D=0x%04X 0F=0x%04X\n",
                           (int)_state, _status.frequency / 100.0f, _status.rssi,
-                          reg0a, (reg0a >> 15) & 1, (reg0a >> 11) & 1,
+                          reg0a, reg0a & 0x01, (reg0a >> 4) & 0x01,
                           reg0d, reg0f);
         }
     }
