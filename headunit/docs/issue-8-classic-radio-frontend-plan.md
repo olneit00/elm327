@@ -48,51 +48,50 @@ vorher eine echte Datumsverfolgung einzuführen. GPS ist laut Issue
 
 ### Phase 0 — Branch & Grundgerüst (dieser Schritt)
 - [x] Branch `issue-8-classic-radio-frontend` angelegt
-- [ ] Verzeichnis `headunit/data/classic-radio/` mit `index.html`,
-      `classic-radio.css`, `classic-radio.js`, `assets/`
-- [ ] Neue Route in `WebServer::_setupStaticFiles()`:
+- [x] Verzeichnis `headunit/data/classic-radio/` mit `index.html`,
+      `classic-radio.css`, `classic-radio.js`
+- [x] Neue Route in `WebServer::_setupStaticFiles()`:
       `serveStatic("/classic-radio", LittleFS, "/classic-radio/index.html")`
-      + `serveStatic("/classic-radio/", ...)` für Unterdateien.
+      + je eine `serveStatic()`-Route für `classic-radio.css`/`classic-radio.js`.
       **Entscheidung:** anders als bei `/radio` wird für das neue
       Frontend **keine** eingebettete C++-Fallback-Kopie gepflegt (der
       Doppelpflegeaufwand aus S7/REFACTORING_PROGRESS.md wäre für ein
       komplett neues, deutlich größeres UI unverhältnismäßig). Fällt
       LittleFS aus, liefert `/classic-radio` einfach 404 — `/radio`
       bleibt über seinen bestehenden Fallback erreichbar.
-- [ ] Kurzer Eintrag in `README.md`/`REFACTORING_PROGRESS.md`, dass
-      `/classic-radio` existiert.
+- [x] Kurzer Eintrag in `README.md`, dass `/classic-radio` existiert
+      (Abschnitt war als "Geplant" bereits vorbereitet, jetzt aktualisiert).
+- [x] Folge-Issue für `GET /api/time` angelegt: [#9](https://github.com/olneit00/elm327/issues/9)
 
 ### Phase 1 — V1 mit ausschließlich bestehender API (Kernumfang)
 Kein Backend-Change nötig, nur Frontend.
 
-- [ ] **Radio-Hauptansicht**: Skala 87.5–108 MHz als horizontaler
+- [x] **Radio-Hauptansicht**: Skala 87.5–108 MHz als horizontaler
       Balken/SVG mit Zeiger, Frequenz aus `status.frequency`/SSE
       `status`; PS/RT dezent; RSSI-Instrument aus `status.rssi`;
       Stereo-/RDS-Kontrollleuchten aus `status.stereo`/`status.rds.synced`;
       Lautstärke-Drehregler → `POST /volume`; Feinabstimmung → `POST
       /nudge`; 6 Stationstasten aus den ersten 6 `favorite`-Einträgen
       der Senderliste (`GET /stations`).
-- [ ] **Stationen/Favoriten**: Liste aus `GET /stations`, Tap → `POST
+- [x] **Stationen/Favoriten**: Liste aus `GET /stations`, Tap → `POST
       /frequency`, Stern toggelt `POST /favorite`.
-- [ ] **Sendersuchlauf-Dialog**: `POST /scan/start`, Fortschritt per SSE
-      `scan` (Fallback-Poll `GET /scan/progress`), `POST /scan/cancel`,
-      danach Wechsel zur Stationsliste.
-- [ ] **RDS-Detailansicht**: reine Darstellung aus `status`/SSE
+- [x] **Sendersuchlauf-Dialog**: `POST /scan/start`, Fortschritt per SSE
+      `scan`, `POST /scan/cancel`, danach Wechsel zur Stationsliste.
+- [x] **RDS-Detailansicht**: reine Darstellung aus `status`/SSE
       (`programService`, `radioText`, `rds.piCode`, `rds.pty`/`ptyName`,
       `rds.tp`, `rds.ta`, `rds.synced`, `rds.bler.{a,b,c,d}`, `rssi`,
       `stereo`, `frequency`) — alle Felder existieren bereits aus Issue
       #3.
-- [ ] **Einstellungen (Teilmenge)**: Lautstärke, Mute, WLAN
+- [x] **Einstellungen (Teilmenge)**: Lautstärke, Mute, WLAN
       SSID/Passwort — über bestehende Endpoints, optisch ans
       Retro-Design angepasst.
-- [ ] **Navigation**: feste Bottom-Nav (Radio/Stationen/RDS/Uhr/
+- [x] **Navigation**: feste Bottom-Nav (Radio/Stationen/RDS/Uhr/
       Einstellungen), mobile-first, große Touch-Flächen, kein Scrollen
       auf der Hauptansicht im Smartphone-Format nötig.
-- [ ] **Uhr-Screen V1 (ohne neuen Endpoint)**: analoge Uhr rein
-      clientseitig aus der Browser-Systemzeit gerendert (Platzhalter-
-      Zeitquelle `"lokal (Browser)"`), da es noch keine belastbare
-      Server-Zeitquelle gibt. Klar als vorläufig kennzeichnen, bis
-      Phase 2 landet.
+- [x] **Uhr-Screen V1 (ohne neuen Endpoint)**: analoge Uhr rein
+      clientseitig aus der Browser-Systemzeit gerendert (Zeitquelle
+      als `"lokal (Browser)"` gekennzeichnet), bis Issue #9 (Phase 2)
+      landet.
 
 ### Phase 2 — `GET /api/time` + echte Zeitquelle
 - [ ] `TimeOfDay`/`ITimeSource` um Datum erweitern oder separate

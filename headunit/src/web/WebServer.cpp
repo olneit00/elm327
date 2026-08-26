@@ -402,6 +402,17 @@ void WebServer::_setupStaticFiles() {
         _server->serveStatic("/radio/app.js", LittleFS, "/app.js").setDefaultFile("/app.js");
         _server->serveStatic("/radio", LittleFS, "/index.html").setDefaultFile("/index.html");
         _server->serveStatic("/", LittleFS, "/index.html").setDefaultFile("/index.html");
+
+        // Classic 1930s-styled frontend (issue #8), served alongside /radio
+        // from the same backend/API. Unlike /radio, this frontend has no
+        // embedded C++ fallback copy - if LittleFS is unavailable, /radio
+        // still works via its own fallback, and /classic-radio simply 404s
+        // (see headunit/docs/issue-8-classic-radio-frontend-plan.md for the
+        // rationale: doubling the maintenance of a whole second themed UI as
+        // raw C++ strings wasn't judged worth it).
+        _server->serveStatic("/classic-radio/classic-radio.css", LittleFS, "/classic-radio/classic-radio.css");
+        _server->serveStatic("/classic-radio/classic-radio.js", LittleFS, "/classic-radio/classic-radio.js");
+        _server->serveStatic("/classic-radio", LittleFS, "/classic-radio/index.html").setDefaultFile("/classic-radio/index.html");
     }
 
     _server->on("/", HTTP_GET, [](AsyncWebServerRequest* request) {

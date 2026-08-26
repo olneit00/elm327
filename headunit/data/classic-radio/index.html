@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Opel Radio · 1935</title>
+    <link rel="stylesheet" href="/classic-radio/classic-radio.css">
+</head>
+<body>
+    <div class="cabinet">
+
+        <!-- ===================== Radio (Hauptansicht) ===================== -->
+        <section id="screen-radio" class="screen active">
+            <header class="cr-topbar">
+                <div class="cr-clock-mini" id="cr-clock-mini" aria-label="Uhr">
+                    <div class="cr-clock-face">
+                        <div class="cr-hand cr-hand-hour" id="mini-hand-hour"></div>
+                        <div class="cr-hand cr-hand-min" id="mini-hand-min"></div>
+                    </div>
+                </div>
+                <div class="cr-lamps">
+                    <div class="cr-lamp" id="lamp-stereo" title="Stereo"><span>ST</span></div>
+                    <div class="cr-lamp" id="lamp-rds" title="RDS Sync"><span>RDS</span></div>
+                </div>
+            </header>
+
+            <div class="cr-dial-window">
+                <div class="cr-dial-scale" id="cr-dial-scale">
+                    <!-- tick marks + MHz labels injected by JS -->
+                    <div class="cr-pointer" id="cr-pointer"></div>
+                </div>
+                <div class="cr-dial-readout">
+                    <span id="cr-freq">--.--</span><small>MHz</small>
+                </div>
+            </div>
+
+            <div class="cr-station-text">
+                <div class="cr-ps" id="cr-ps">&nbsp;</div>
+                <div class="cr-rt" id="cr-rt">&nbsp;</div>
+            </div>
+
+            <div class="cr-instruments">
+                <div class="cr-meter" title="Signalstärke">
+                    <span class="cr-meter-label">Feld</span>
+                    <div class="cr-meter-track"><div class="cr-meter-fill" id="cr-rssi-fill"></div></div>
+                </div>
+            </div>
+
+            <div class="cr-controls">
+                <div class="cr-knob-group">
+                    <button class="cr-knob" id="knob-volume" aria-label="Lautstärke">
+                        <div class="cr-knob-face"><div class="cr-knob-notch"></div></div>
+                    </button>
+                    <div class="cr-knob-caption">Lautstärke</div>
+                    <div class="cr-knob-buttons">
+                        <button id="vol-minus" class="cr-knob-btn">−</button>
+                        <span id="cr-vol-value" class="cr-knob-value">50%</span>
+                        <button id="vol-plus" class="cr-knob-btn">+</button>
+                    </div>
+                </div>
+
+                <div class="cr-knob-group">
+                    <button class="cr-knob" id="knob-tune" aria-label="Feinabstimmung">
+                        <div class="cr-knob-face"><div class="cr-knob-notch"></div></div>
+                    </button>
+                    <div class="cr-knob-caption">Sender</div>
+                    <div class="cr-knob-buttons">
+                        <button id="tune-minus" class="cr-knob-btn">◀</button>
+                        <button id="tune-mute" class="cr-knob-btn cr-mute-btn">Mute</button>
+                        <button id="tune-plus" class="cr-knob-btn">▶</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="cr-presets" id="cr-presets">
+                <!-- 6 preset buttons injected by JS -->
+            </div>
+        </section>
+
+        <!-- ===================== Stationen / Favoriten ===================== -->
+        <section id="screen-stations" class="screen">
+            <header class="cr-screen-header">
+                <h1>Stationen</h1>
+                <button id="scan-start-btn" class="cr-btn-brass">Sendersuchlauf</button>
+            </header>
+            <ul class="cr-station-list" id="cr-station-list"></ul>
+        </section>
+
+        <!-- Scan overlay -->
+        <div id="scan-overlay" class="cr-overlay hidden">
+            <div class="cr-overlay-panel">
+                <div class="cr-overlay-lamp"></div>
+                <h2>Suche nach UKW-Sendern …</h2>
+                <div class="cr-meter-track cr-scan-track"><div class="cr-meter-fill" id="scan-fill"></div></div>
+                <p id="scan-text">0 % · 0 Sender</p>
+                <button id="scan-cancel-btn" class="cr-btn-brass cr-btn-danger">Abbrechen</button>
+            </div>
+        </div>
+
+        <!-- ===================== RDS-Detail ===================== -->
+        <section id="screen-rds" class="screen">
+            <header class="cr-screen-header"><h1>RDS-Informationen</h1></header>
+            <div class="cr-rds-panel">
+                <div class="cr-rds-row"><span>PS</span><b id="rds-ps">--</b></div>
+                <div class="cr-rds-row"><span>RT</span><b id="rds-rt">--</b></div>
+                <div class="cr-rds-row"><span>PI</span><b id="rds-pi">--</b></div>
+                <div class="cr-rds-row"><span>PTY</span><b id="rds-pty">--</b></div>
+                <div class="cr-rds-row"><span>TP / TA</span><b id="rds-tpta">-- / --</b></div>
+                <div class="cr-rds-row"><span>RDS Sync</span><b id="rds-sync">--</b></div>
+                <div class="cr-rds-row"><span>RSSI</span><b id="rds-rssi">--</b></div>
+                <div class="cr-rds-row"><span>Stereo</span><b id="rds-stereo">--</b></div>
+                <div class="cr-rds-row"><span>Frequenz</span><b id="rds-freq">--</b></div>
+                <div class="cr-rds-row cr-rds-bler">
+                    <span>BLER</span>
+                    <span class="cr-bler-dots">
+                        <span id="rds-bler-a" class="bler-dot" title="Block A"></span>
+                        <span id="rds-bler-b" class="bler-dot" title="Block B"></span>
+                        <span id="rds-bler-c" class="bler-dot" title="Block C"></span>
+                        <span id="rds-bler-d" class="bler-dot" title="Block D"></span>
+                    </span>
+                </div>
+            </div>
+        </section>
+
+        <!-- ===================== Uhr ===================== -->
+        <section id="screen-clock" class="screen">
+            <header class="cr-screen-header"><h1>Uhr</h1></header>
+            <div class="cr-clock-big-wrap">
+                <div class="cr-clock-big" id="cr-clock-big">
+                    <div class="cr-hand-big cr-hand-hour" id="big-hand-hour"></div>
+                    <div class="cr-hand-big cr-hand-min" id="big-hand-min"></div>
+                    <div class="cr-hand-big cr-hand-sec" id="big-hand-sec"></div>
+                    <div class="cr-clock-cap"></div>
+                </div>
+            </div>
+            <div class="cr-clock-digital" id="cr-clock-digital">--:--:--</div>
+            <div class="cr-clock-date" id="cr-clock-date">--</div>
+            <div class="cr-clock-source">Zeitquelle: <span id="cr-clock-source">lokal (Browser)</span></div>
+        </section>
+
+        <!-- ===================== Einstellungen ===================== -->
+        <section id="screen-settings" class="screen">
+            <header class="cr-screen-header"><h1>Einstellungen</h1></header>
+
+            <div class="cr-settings-group">
+                <label>Lautstärke: <span id="settings-vol-value">50</span>%</label>
+                <input type="range" id="settings-volume" min="0" max="100" value="50" class="cr-slider">
+            </div>
+
+            <div class="cr-settings-group cr-settings-row">
+                <label for="settings-mute">Stummschaltung</label>
+                <button id="settings-mute" class="cr-btn-brass">Mute</button>
+            </div>
+
+            <div class="cr-settings-group">
+                <label>WLAN SSID</label>
+                <input type="text" id="settings-ssid" class="cr-input" placeholder="SSID">
+            </div>
+            <div class="cr-settings-group">
+                <label>WLAN Passwort</label>
+                <input type="password" id="settings-pass" class="cr-input" placeholder="Passwort">
+            </div>
+            <div class="cr-settings-group">
+                <button id="settings-wifi-save" class="cr-btn-brass">WLAN verbinden</button>
+                <span id="settings-wifi-status" class="cr-wifi-status"></span>
+            </div>
+
+            <p class="cr-settings-note">Zum technischen Frontend wechseln: <a href="/radio">/radio</a></p>
+        </section>
+
+        <!-- ===================== Navigation ===================== -->
+        <nav class="cr-nav">
+            <button class="cr-nav-btn active" data-screen="radio">Radio</button>
+            <button class="cr-nav-btn" data-screen="stations">Stationen</button>
+            <button class="cr-nav-btn" data-screen="rds">RDS</button>
+            <button class="cr-nav-btn" data-screen="clock">Uhr</button>
+            <button class="cr-nav-btn" data-screen="settings">Einst.</button>
+        </nav>
+    </div>
+
+    <script src="/classic-radio/classic-radio.js"></script>
+</body>
+</html>

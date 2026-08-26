@@ -1,0 +1,549 @@
+/* =========================================================
+   Opel Radio · Classic 1935 frontend
+   Wood/bakelite cabinet, brass trim, amber-lit dial.
+   ========================================================= */
+
+:root {
+    --wood-dark: #2b1a10;
+    --wood-mid: #3f2415;
+    --wood-light: #5a3420;
+    --bakelite: #1c1210;
+    --brass: #c9a86a;
+    --brass-dark: #8a6b3a;
+    --brass-light: #e8d5a0;
+    --dial-cream: #f3e2b3;
+    --dial-amber: #e0a437;
+    --pointer-red: #c62828;
+    --fg: #f0e6d2;
+    --fg-dim: #b9a988;
+    --danger: #8a2020;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+    font-family: 'Georgia', 'Times New Roman', serif;
+    background: #000;
+    color: var(--fg);
+    display: flex;
+    justify-content: center;
+    min-height: 100vh;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+}
+
+.cabinet {
+    width: 100%;
+    max-width: 480px;
+    min-height: 100vh;
+    background:
+        radial-gradient(ellipse at top, var(--wood-light) 0%, var(--wood-mid) 45%, var(--wood-dark) 100%);
+    border-left: 6px solid var(--brass-dark);
+    border-right: 6px solid var(--brass-dark);
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    overflow: hidden;
+}
+
+.screen {
+    display: none;
+    flex: 1;
+    padding: 14px 16px 90px;
+    overflow-y: auto;
+}
+
+.screen.active { display: flex; flex-direction: column; }
+
+/* ---------- Top bar: mini clock + status lamps ---------- */
+.cr-topbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.cr-clock-mini {
+    width: 46px;
+    height: 46px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, var(--brass-light), var(--brass-dark) 80%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 0 0 2px var(--wood-dark), inset 0 0 6px rgba(0,0,0,0.5);
+}
+
+.cr-clock-face {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    background: var(--dial-cream);
+    position: relative;
+}
+
+.cr-hand {
+    position: absolute;
+    left: 50%;
+    bottom: 50%;
+    transform-origin: 50% 100%;
+    background: var(--bakelite);
+    border-radius: 2px;
+}
+.cr-hand-hour { width: 2px; height: 9px; margin-left: -1px; }
+.cr-hand-min { width: 1.5px; height: 13px; margin-left: -0.75px; }
+
+.cr-lamps { display: flex; gap: 8px; }
+
+.cr-lamp {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, #4a3a2a, #241a10 80%);
+    box-shadow: 0 0 0 2px var(--brass-dark), inset 0 0 4px rgba(0,0,0,0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.55rem;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    color: #6a5a48;
+    transition: all 0.3s;
+}
+
+.cr-lamp.on {
+    background: radial-gradient(circle at 35% 30%, #ffdd88, var(--dial-amber) 80%);
+    color: #3a2400;
+    box-shadow: 0 0 10px 2px rgba(224, 164, 55, 0.8), 0 0 0 2px var(--brass);
+}
+
+/* ---------- Dial ---------- */
+.cr-dial-window {
+    background: var(--bakelite);
+    border-radius: 10px;
+    padding: 14px 12px 10px;
+    box-shadow:
+        0 0 0 3px var(--brass-dark),
+        0 0 0 5px var(--wood-dark),
+        inset 0 2px 10px rgba(0,0,0,0.7);
+    margin-bottom: 12px;
+}
+
+.cr-dial-scale {
+    position: relative;
+    height: 60px;
+    background: linear-gradient(to bottom, #f6e7ba, var(--dial-cream) 55%, #d8bd7c);
+    border-radius: 4px;
+    overflow: hidden;
+    box-shadow: inset 0 0 12px rgba(120, 80, 20, 0.4);
+}
+
+.cr-tick {
+    position: absolute;
+    bottom: 0;
+    width: 1px;
+    background: #6b4a20;
+    opacity: 0.6;
+}
+.cr-tick.major { width: 2px; opacity: 0.9; }
+
+.cr-tick-label {
+    position: absolute;
+    bottom: 22px;
+    transform: translateX(-50%);
+    font-size: 0.65rem;
+    color: #5a3c14;
+    font-weight: 600;
+}
+
+.cr-pointer {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: var(--pointer-red);
+    box-shadow: 0 0 6px 1px rgba(198, 40, 40, 0.8);
+    left: 0%;
+    transition: left 0.25s ease-out;
+}
+.cr-pointer::before {
+    content: '';
+    position: absolute;
+    top: -4px;
+    left: -4px;
+    width: 10px;
+    height: 10px;
+    background: var(--pointer-red);
+    border-radius: 50% 50% 50% 0;
+    transform: rotate(45deg);
+}
+
+.cr-dial-readout {
+    text-align: center;
+    margin-top: 8px;
+    color: var(--brass-light);
+    font-variant-numeric: tabular-nums;
+}
+.cr-dial-readout span { font-size: 1.8rem; font-weight: 700; }
+.cr-dial-readout small { font-size: 0.9rem; margin-left: 4px; color: var(--fg-dim); }
+
+/* ---------- Station text ---------- */
+.cr-station-text { text-align: center; margin-bottom: 10px; min-height: 44px; }
+.cr-ps { font-size: 1.1rem; font-weight: 700; color: var(--brass-light); }
+.cr-rt {
+    font-size: 0.8rem;
+    color: var(--fg-dim);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* ---------- Instruments (signal meter) ---------- */
+.cr-instruments { margin-bottom: 14px; }
+.cr-meter { display: flex; align-items: center; gap: 8px; }
+.cr-meter-label { font-size: 0.7rem; color: var(--fg-dim); width: 40px; }
+.cr-meter-track {
+    flex: 1;
+    height: 8px;
+    background: #1a1008;
+    border-radius: 4px;
+    box-shadow: inset 0 0 4px rgba(0,0,0,0.8), 0 0 0 1px var(--brass-dark);
+    overflow: hidden;
+}
+.cr-meter-fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(to right, #7a5a1a, var(--dial-amber));
+    transition: width 0.3s;
+}
+
+/* ---------- Knobs ---------- */
+.cr-controls {
+    display: flex;
+    justify-content: space-around;
+    margin-bottom: 14px;
+}
+
+.cr-knob-group { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+
+.cr-knob {
+    width: 78px;
+    height: 78px;
+    border-radius: 50%;
+    border: none;
+    background: radial-gradient(circle at 32% 28%, var(--brass-light) 0%, var(--brass) 45%, var(--brass-dark) 100%);
+    box-shadow: 0 4px 6px rgba(0,0,0,0.6), inset 0 0 6px rgba(255,255,255,0.3);
+    cursor: pointer;
+    position: relative;
+}
+
+.cr-knob-face {
+    position: absolute;
+    inset: 10px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, #4a3220, var(--bakelite) 75%);
+    box-shadow: inset 0 0 6px rgba(0,0,0,0.8);
+}
+
+.cr-knob-notch {
+    position: absolute;
+    top: 6px;
+    left: 50%;
+    width: 3px;
+    height: 12px;
+    margin-left: -1.5px;
+    background: var(--brass-light);
+    border-radius: 2px;
+}
+
+.cr-knob-caption { font-size: 0.75rem; color: var(--fg-dim); }
+
+.cr-knob-buttons { display: flex; align-items: center; gap: 6px; }
+
+.cr-knob-btn {
+    min-width: 36px;
+    min-height: 36px;
+    border-radius: 8px;
+    border: 1px solid var(--brass-dark);
+    background: linear-gradient(to bottom, #4a3320, #2a1c10);
+    color: var(--brass-light);
+    font-size: 1rem;
+    font-weight: 700;
+    cursor: pointer;
+}
+.cr-knob-btn:active { background: var(--brass-dark); color: var(--bakelite); }
+
+.cr-mute-btn { font-size: 0.65rem; padding: 0 6px; }
+
+.cr-knob-value {
+    min-width: 42px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+    color: var(--brass-light);
+    font-size: 0.85rem;
+}
+
+/* ---------- Preset buttons ---------- */
+.cr-presets {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin-top: auto;
+}
+
+.cr-preset-btn {
+    height: 52px;
+    border-radius: 6px;
+    border: none;
+    background: linear-gradient(to bottom, #5a3d24, #2e1d10);
+    box-shadow: 0 3px 0 var(--wood-dark), inset 0 1px 0 rgba(255,255,255,0.15), 0 0 0 1px var(--brass-dark);
+    color: var(--brass-light);
+    font-size: 0.72rem;
+    font-weight: 600;
+    padding: 4px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: pointer;
+}
+.cr-preset-btn:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--wood-dark), 0 0 0 1px var(--brass-dark); }
+.cr-preset-btn.current { background: linear-gradient(to bottom, var(--dial-amber), #8a5a10); color: #2a1a00; }
+.cr-preset-btn.empty { opacity: 0.4; }
+
+/* ---------- Generic screen header / brass buttons ---------- */
+.cr-screen-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+.cr-screen-header h1 { font-size: 1.2rem; color: var(--brass-light); }
+
+.cr-btn-brass {
+    padding: 10px 16px;
+    border-radius: 8px;
+    border: none;
+    background: linear-gradient(to bottom, var(--brass-light), var(--brass-dark));
+    color: #2a1a00;
+    font-weight: 700;
+    cursor: pointer;
+    box-shadow: 0 2px 0 rgba(0,0,0,0.4);
+}
+.cr-btn-brass:active { transform: translateY(1px); box-shadow: none; }
+.cr-btn-danger { background: linear-gradient(to bottom, #d05050, var(--danger)); color: #fff; }
+
+/* ---------- Station list ---------- */
+.cr-station-list { list-style: none; display: flex; flex-direction: column; gap: 8px; }
+
+.cr-station-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    background: linear-gradient(to bottom, #3a2818, #241708);
+    border-radius: 8px;
+    box-shadow: 0 0 0 1px var(--brass-dark);
+    cursor: pointer;
+}
+.cr-station-item.current { box-shadow: 0 0 0 2px var(--dial-amber); }
+
+.cr-station-fav {
+    background: none;
+    border: none;
+    font-size: 1.2rem;
+    color: var(--brass);
+    cursor: pointer;
+    flex-shrink: 0;
+}
+.cr-station-fav.active { color: var(--dial-amber); }
+
+.cr-station-main { flex: 1; min-width: 0; }
+.cr-station-name { font-weight: 700; color: var(--brass-light); }
+.cr-station-meta { font-size: 0.72rem; color: var(--fg-dim); display: flex; gap: 8px; }
+
+/* ---------- Scan overlay ---------- */
+.cr-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.85);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+.cr-overlay.hidden { display: none; }
+
+.cr-overlay-panel {
+    background: var(--wood-mid);
+    border-radius: 12px;
+    box-shadow: 0 0 0 3px var(--brass-dark);
+    padding: 24px;
+    width: 85%;
+    max-width: 340px;
+    text-align: center;
+}
+
+.cr-overlay-lamp {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    margin: 0 auto 14px;
+    background: radial-gradient(circle at 35% 30%, #ffdd88, var(--dial-amber));
+    box-shadow: 0 0 10px 3px rgba(224, 164, 55, 0.8);
+    animation: cr-blink 1s infinite;
+}
+@keyframes cr-blink { 50% { opacity: 0.3; } }
+
+.cr-overlay-panel h2 { font-size: 1rem; margin-bottom: 14px; color: var(--brass-light); }
+.cr-scan-track { margin-bottom: 10px; }
+.cr-overlay-panel p { margin-bottom: 16px; color: var(--fg-dim); font-size: 0.85rem; }
+
+/* ---------- RDS detail panel ---------- */
+.cr-rds-panel {
+    background: var(--bakelite);
+    border-radius: 8px;
+    box-shadow: 0 0 0 2px var(--brass-dark);
+    padding: 10px 14px;
+}
+.cr-rds-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 8px 0;
+    border-bottom: 1px solid rgba(201, 168, 106, 0.15);
+    font-size: 0.85rem;
+}
+.cr-rds-row:last-child { border-bottom: none; }
+.cr-rds-row span { color: var(--fg-dim); }
+.cr-rds-row b { color: var(--brass-light); font-weight: 600; text-align: right; }
+
+.cr-bler-dots { display: flex; gap: 6px; }
+.bler-dot { width: 10px; height: 10px; border-radius: 50%; background: #444; display: inline-block; }
+.bler-dot.bler-0 { background: #3ecf5c; }
+.bler-dot.bler-1 { background: #cca300; }
+.bler-dot.bler-2 { background: #cc7a00; }
+.bler-dot.bler-3 { background: #c41e3a; }
+
+/* ---------- Clock screen ---------- */
+.cr-clock-big-wrap { display: flex; justify-content: center; margin: 20px 0; }
+
+.cr-clock-big {
+    width: 220px;
+    height: 220px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, var(--brass-light), var(--brass-dark) 85%);
+    box-shadow: 0 0 0 4px var(--wood-dark), inset 0 0 20px rgba(0,0,0,0.5);
+    position: relative;
+}
+.cr-clock-big::before {
+    content: '';
+    position: absolute;
+    inset: 14px;
+    border-radius: 50%;
+    background: var(--dial-cream);
+    box-shadow: inset 0 0 14px rgba(120, 80, 20, 0.4);
+}
+
+.cr-hand-big {
+    position: absolute;
+    left: 50%;
+    bottom: 50%;
+    transform-origin: 50% 100%;
+    background: var(--bakelite);
+    border-radius: 3px;
+    z-index: 2;
+}
+.cr-hand-hour { width: 6px; height: 55px; margin-left: -3px; }
+.cr-hand-min { width: 4px; height: 80px; margin-left: -2px; }
+.cr-hand-sec { width: 2px; height: 88px; margin-left: -1px; background: var(--pointer-red); }
+
+.cr-clock-cap {
+    position: absolute;
+    top: 50%; left: 50%;
+    width: 14px; height: 14px;
+    margin: -7px 0 0 -7px;
+    border-radius: 50%;
+    background: var(--brass);
+    box-shadow: 0 0 0 2px var(--bakelite);
+    z-index: 3;
+}
+
+.cr-clock-digital {
+    text-align: center;
+    font-size: 1.6rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--brass-light);
+}
+.cr-clock-date { text-align: center; color: var(--fg-dim); margin-top: 4px; }
+.cr-clock-source { text-align: center; margin-top: 14px; font-size: 0.8rem; color: var(--fg-dim); }
+.cr-clock-source span { color: var(--brass-light); font-weight: 600; }
+
+/* ---------- Settings screen ---------- */
+.cr-settings-group { margin-bottom: 16px; }
+.cr-settings-group label { display: block; margin-bottom: 6px; color: var(--fg-dim); font-size: 0.85rem; }
+.cr-settings-row { display: flex; justify-content: space-between; align-items: center; }
+
+.cr-slider {
+    width: 100%;
+    height: 6px;
+    border-radius: 3px;
+    background: #1a1008;
+    outline: none;
+    -webkit-appearance: none;
+    appearance: none;
+}
+.cr-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 20px; height: 20px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, var(--brass-light), var(--brass-dark));
+    cursor: pointer;
+}
+
+.cr-input {
+    width: 100%;
+    padding: 10px;
+    background: var(--bakelite);
+    border: 1px solid var(--brass-dark);
+    color: var(--fg);
+    border-radius: 6px;
+}
+
+.cr-wifi-status { margin-left: 10px; font-size: 0.8rem; color: var(--fg-dim); }
+.cr-settings-note { margin-top: 20px; font-size: 0.8rem; color: var(--fg-dim); }
+.cr-settings-note a { color: var(--brass-light); }
+
+/* ---------- Bottom navigation ---------- */
+.cr-nav {
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    display: flex;
+    background: linear-gradient(to bottom, var(--wood-mid), var(--wood-dark));
+    box-shadow: 0 -2px 0 var(--brass-dark), 0 -4px 12px rgba(0,0,0,0.5);
+    padding: 6px;
+    gap: 4px;
+}
+
+.cr-nav-btn {
+    flex: 1;
+    background: none;
+    border: none;
+    color: var(--fg-dim);
+    font-size: 0.72rem;
+    padding: 10px 2px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-family: inherit;
+}
+.cr-nav-btn.active {
+    color: var(--bakelite);
+    background: linear-gradient(to bottom, var(--brass-light), var(--brass-dark));
+    font-weight: 700;
+}
+
+.hidden { display: none !important; }
+
+/* ---------- Small screens: keep the main radio view scroll-free ---------- */
+@media (max-width: 400px) {
+    .cr-knob { width: 66px; height: 66px; }
+    .cr-dial-scale { height: 50px; }
+}
