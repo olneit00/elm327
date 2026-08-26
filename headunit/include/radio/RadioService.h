@@ -111,9 +111,14 @@ private:
 
     // Scan state machine
     struct ScanState {
-        enum Phase { Idle, SeekStart, SeekWait, StoreStation, NextSeek, Complete } phase = Phase::Idle;
+        enum Phase { Idle, SeekStart, SeekWait, Settle, StoreStation, NextSeek, Complete } phase = Phase::Idle;
         uint16_t currentFreq = app_config::kMinFrequency10kHz;
         uint32_t lastSeekMs = 0;
+        // Timestamp when STC (seek complete) was detected for the current
+        // hit, used by the Settle phase to wait for RSSI/AGC to stabilize
+        // before _scanStoreStation() reads it - see _stepScan()'s Settle
+        // case for the full explanation.
+        uint32_t settleStartMs = 0;
         RadioStation stations[app_config::kMaxStations];
         size_t stationCount = 0;
     } _scan;

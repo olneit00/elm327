@@ -140,6 +140,20 @@ bool RadioService::_initHardware() {
     // RDS enable
     _si470x.setRds(true);
 
+    // KRITISCH: RDSS (RDS Synchronized) and BLERA/B/C/D (block error rates)
+    // are only meaningful in RDS "verbose" mode. The PU2CLR library's own
+    // powerUp() unconditionally sets RDSM=0 (standard mode) via
+    // reg02->refined.RDSM = 0, and in standard mode the chip hardware
+    // forces RDSS and the BLER fields to always read 0 (Si4702/03-C19
+    // datasheet Sec. 4.4 "RDS/RBDS Processor and Functionality", and the
+    // Reg 0Ah bit comments for RDSS/BLERA: "Available only in RDS Verbose
+    // mode (RDSM 02h[11] = 1)"). Without switching to verbose mode here,
+    // _pollRds()'s "rdsReady && rdsSynced" gate can never pass - RDSS is
+    // hardware-clamped to 0 - regardless of signal quality or the AGC fix.
+    // RDSR itself is valid in both modes, which is why it kept blipping
+    // true while RDSS never latched.
+    _si470x.setRdsMode(1);  // RDS Verbose mode: enables real RDSS/BLER
+
     // Initial volume
     _applyVolume();
 
@@ -287,8 +301,9 @@ void RadioService::_stepScan() {
             const int seekResult = _scanSeekWait();
             // 0 = still running, 1 = station found, 2 = seek fail (no more stations)
             if (seekResult == 1) {
-                Serial.printf("[RADIO::SCAN] Phase: SeekWait - FOUND station, storing...\n");
-                _scan.phase = ScanState::StoreStation;
+                Serial.printf("[RADIO::SCAN] Phase: SeekWait - FOUND station, settling...\n");
+                _scan.phase = ScanState::Settle;
+                _scan.settleStartMs = millis();
             } else if (seekResult == 2) {
                 Serial.printf("[RADIO::SCAN] Phase: SeekWait - seek fail, scan complete (%u found)\n", _scan.stationCount);
                 _scan.phase = ScanState::Complete;
@@ -299,6 +314,20 @@ void RadioService::_stepScan() {
             }
             break;
             }
+
+        // RSSI/AGC needs roughly 100-200 ms to settle after STC (seek
+        // complete) before it reflects the actual signal strength at the
+        // new frequency - reading it immediately produced systematically
+        // too-low RSSI values (see issue #2), which combined with the
+        // static kMinStationRssi threshold to reject stations the chip's
+        // own seek logic had already validated. Non-blocking wait: the
+        // loop() task keeps running (UI, RDS polling for other frequencies
+        // don't apply here since we're mid-scan, but nothing blocks).
+        case ScanState::Settle:
+            if (millis() - _scan.settleStartMs >= 150) {
+                _scan.phase = ScanState::StoreStation;
+            }
+            break;
 
         case ScanState::StoreStation:
             Serial.println(F("[RADIO::SCAN] Phase: StoreStation"));
@@ -557,7 +586,18 @@ void RadioService::_pollRds() {
                       _status.stereo ? "yes" : "no", _status.frequency / 100.0f);
     }
 
-    if (rdsReady && rdsSynced) {
+    // BLERA ("Block A error rate", register 0x0A bits 10:9) is only
+    // meaningful now that RDS verbose mode is enabled (see setRdsMode(1) in
+    // _initHardware()) - in standard mode it hardware-reads 0 always. Per
+    // the datasheet / the library's own getRdsReady() doc comment: "If
+    // BLERA indicates 6 or more errors, the data in RDSA should be
+    // discarded." 0=0 errors, 1=1-2, 2=3-5 (still correctable), 3=6+ or
+    // uncorrectable checkword - reject that case outright even if RDSS
+    // reports synchronized, rather than risk decoding a corrupted group.
+    const uint8_t blerA = (_si470x.getShadownRegister(0x0A) >> 9) & 0x03;
+    const bool blockAOk = blerA < 3;
+
+    if (rdsReady && rdsSynced && blockAOk) {
         bool changed = false;
         {
             MutexGuard guard(_mutex);
