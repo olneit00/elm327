@@ -231,11 +231,21 @@ void RadioService::_stepTuning() {
 
 void RadioService::_stepSeeking() {
     // Start a queued seek here (loop task) rather than in the web/async_tcp
-    // task, which must not block on the Si4703 seek/STC spin.
+    // task, which must not block on the Si4703 seek/STC spin. Raw SEEK is
+    // issued non-blocking and STC is polled below - the library's seek()
+    // waits for STC internally and would stall the whole loop task.
     if (_seekPending) {
         _seekPending = false;
         _lastTuneMs = millis();
-        _si470x.seek(0, _seekUp ? 1 : 0);  // seekMode=0 (wrap), direction up/down
+        _si470x.getAllRegisters();
+        uint16_t r02 = _si470x.getShadownRegister(0x02);
+        r02 &= ~0x0C00u;                     // clear SEEKUP + SKMODE
+        r02 |= 0x0100u;                      // SEEK = 1
+        r02 |= (_seekUp ? 0x0200u : 0u);     // SEEKUP per request
+        _si470x.setShadownRegister(0x02, r02);
+        uint16_t r03 = _si470x.getShadownRegister(0x03);
+        _si470x.setShadownRegister(0x03, r03 | 0x8000u);  // TUNE = 1
+        _si470x.setAllRegisters();
         return;
     }
 
@@ -252,22 +262,58 @@ void RadioService::_stepSeeking() {
     // work by coincidence (those bits are actually part of the RSSI byte,
     // bits 7:0) - it broke again once the AGC fix changed the RSSI
     // distribution enough to change how often those bits happened to be set.
-    if (_si470x.getShadownRegister(0x0A) & 0x4000) {  // STC: seek/tune complete (bit 14)
-        {
-            // The station just found by seek hasn't had its RDS text
-            // decoded yet - clear the previous station's stale text (see
-            // the same reasoning in setFrequency()).
-            MutexGuard guard(_mutex);
-            if (guard.acquired()) {
-                _status.programService[0] = '\0';
-                _status.radioText[0] = '\0';
-            }
+    const uint16_t reg0a = _si470x.getShadownRegister(0x0A);
+    const bool stcSet = (reg0a & 0x4000) != 0;  // STC: seek/tune complete (bit 14)
+    if (!stcSet) {
+        // Safety net: a full-band wrap seek shouldn't take this long; abort
+        // so the CLI never hangs in the Seeking state.
+        if (millis() - _lastTuneMs > 10000) {
+            Serial.println(F("[RADIO::SEEK] Seek timed out, no station found"));
+            uint16_t r02 = _si470x.getShadownRegister(0x02);
+            _si470x.setShadownRegister(0x02, r02 & ~0x0100u);  // SEEK = 0
+            uint16_t r03 = _si470x.getShadownRegister(0x03);
+            _si470x.setShadownRegister(0x03, r03 & ~0x8000u);  // TUNE = 0
+            _si470x.setAllRegisters();
+            _state = RadioState::Idle;
+            _notifyStatus();
         }
-        _updateStatusFromHardware();
-        _state = RadioState::Idle;
-        _notifyStatus();
-        _notifyStationSelected(_status.frequency, "");
+        return;
     }
+    // Capture SF/BL before clearing SEEK - the chip clears both flags when
+    // SEEK goes back low.
+    const bool seekFail = (reg0a & 0x2000) != 0;  // SF/BL: seek fail / band limit
+
+    // Terminate the pending seek (mirrors the library's waitAndFinishTune()).
+    uint16_t r02 = _si470x.getShadownRegister(0x02);
+    _si470x.setShadownRegister(0x02, r02 & ~0x0100u);  // SEEK = 0
+    uint16_t r03 = _si470x.getShadownRegister(0x03);
+    _si470x.setShadownRegister(0x03, r03 & ~0x8000u);  // TUNE = 0
+    _si470x.setAllRegisters();
+
+    if (seekFail) {
+        Serial.println(F("[RADIO::SEEK] Seek hit band limit, no station found"));
+    } else {
+        _si470x.getAllRegisters();
+        uint16_t foundFreq = _si470x.getRealFrequency();
+        _si470x.setFrequency(foundFreq);  // sync cached frequency
+        Serial.printf("[RADIO::SEEK] Tuned to %.2f MHz\n", foundFreq / 100.0f);
+    }
+
+    // The station just found by seek hasn't had its RDS text decoded yet -
+    // clear the previous station's stale text (see the same reasoning in
+    // setFrequency()).
+    {
+        MutexGuard guard(_mutex);
+        if (guard.acquired()) {
+            _status.frequency = _si470x.getFrequency();
+            _status.programService[0] = '\0';
+            _status.radioText[0] = '\0';
+        }
+    }
+    _updateStatusFromHardware();
+    _state = RadioState::Idle;
+    _notifyStatus();
+    _notifyStationSelected(_status.frequency, "");
 }
 
 void RadioService::_stepScanning() {
@@ -307,7 +353,7 @@ void RadioService::_stepScan() {
             } else if (seekResult == 2) {
                 Serial.printf("[RADIO::SCAN] Phase: SeekWait - seek fail, scan complete (%u found)\n", _scan.stationCount);
                 _scan.phase = ScanState::Complete;
-            } else if (millis() - _scan.lastSeekMs > 2000) {
+            } else if (millis() - _scan.lastSeekMs > 12000) {
                 Serial.printf("[RADIO::SCAN] Phase: SeekWait - TIMEOUT after %lu ms, moving to NextSeek\n", 
                     millis() - _scan.lastSeekMs);
                 _scan.phase = ScanState::NextSeek;
@@ -680,14 +726,29 @@ void RadioService::_pollRds() {
 }
 
 bool RadioService::_scanSeekStart() {
-// Start seek from current scan frequency. currentFreq is already in the
+    // Start seek from current scan frequency. currentFreq is already in the
     // same 10 kHz-step units setFrequency() expects (see _initHardware()).
     Serial.printf("[RADIO::SCAN::SEEK] Starting seek at %.2f MHz\n", _scan.currentFreq / 100.0f);
     _si470x.setFrequency(_scan.currentFreq);
-    delay(50);
-    Serial.println(F("[RADIO::SCAN::SEEK] Calling seek(0, 1)..."));
-    _si470x.seek(0, 1);  // wrap, up
-    Serial.println(F("[RADIO::SCAN::SEEK] Seek started"));
+    delay(10);
+
+    // Do NOT use the library's seek(0,1): that overload blocks inside
+    // waitAndFinishTune() until STC, then clears SEEK (which also clears the
+    // STC and SF/BL flags) before returning. Polling STC afterwards in
+    // _scanSeekWait() would therefore never see it - every seek timed out and
+    // the scan found nothing. Instead issue the raw SEEK command non-blocking
+    // and let _scanSeekWait() poll STC (bit 14) / SF/BL (bit 13) itself.
+    // reg02: bit8=SEEK, bit9=SEEKUP, bit10=SKMODE (0=wrap). reg03: bit15=TUNE.
+    _si470x.getAllRegisters();  // refresh shadow regs, like the library does
+    uint16_t r02 = _si470x.getShadownRegister(0x02);
+    r02 &= ~0x0C00u;                     // clear SEEKUP + SKMODE
+    r02 |= 0x0100u;                      // SEEK = 1
+    r02 |= 0x0200u;                      // SEEKUP = 1 (seek up)
+    _si470x.setShadownRegister(0x02, r02);  // SKMODE stays 0 = wrap
+    uint16_t r03 = _si470x.getShadownRegister(0x03);
+    _si470x.setShadownRegister(0x03, r03 | 0x8000u);  // TUNE = 1
+    _si470x.setAllRegisters();
+    Serial.println(F("[RADIO::SCAN::SEEK] Seek started (non-blocking)"));
     return true;
 }
 
@@ -699,30 +760,39 @@ int RadioService::_scanSeekWait() {
     // bit13=SF/BL (seek fail / band limit), bit11=RDSS. See _stepSeeking()
     // for the full explanation.
     const uint16_t reg0a = _si470x.getShadownRegister(0x0A);
-    const bool stcSet  = (reg0a & 0x4000) != 0;  // bit 14
-    const bool seekFail = (reg0a & 0x2000) != 0; // bit 13
-    if (stcSet) {
-        if (seekFail) {
-            Serial.printf("[RADIO::SCAN::SEEK] Seek failed (SF/BL): no more valid stations in band\n");
-            return 2;
-        }
-        // getFrequency() already returns 10 kHz-step units - no *10 (see
-        // the comment in _initHardware()).
-        uint16_t freq = _si470x.getFrequency();
-        uint8_t rssi = _si470x.getRssi();
-        bool stereo = _si470x.isStereo();
-        Serial.printf("[RADIO::SCAN::SEEK] FOUND: freq=%u (%.2f MHz), RSSI=%u, stereo=%s\n", 
-            freq, freq / 100.0f, rssi, stereo ? "yes" : "no");
-        return 1;
+    const bool stcSet   = (reg0a & 0x4000) != 0;  // bit 14
+    if (!stcSet) return 0;  // still seeking
+
+    // Capture SF/BL *before* clearing SEEK - the chip clears both STC and
+    // SF/BL when SEEK goes back low.
+    const bool seekFail = (reg0a & 0x2000) != 0;  // bit 13
+
+    // Terminate the pending seek (mirrors the library's waitAndFinishTune()).
+    uint16_t r02 = _si470x.getShadownRegister(0x02);
+    _si470x.setShadownRegister(0x02, r02 & ~0x0100u);  // SEEK = 0
+    uint16_t r03 = _si470x.getShadownRegister(0x03);
+    _si470x.setShadownRegister(0x03, r03 & ~0x8000u);  // TUNE = 0
+    _si470x.setAllRegisters();
+
+    if (seekFail) {
+        Serial.printf("[RADIO::SCAN::SEEK] Seek failed (SF/BL): no more valid stations in band\n");
+        return 2;
     }
-    return 0;
+
+    // READCHAN (reg 0x0B) is only refreshed by getAllRegisters(), so pull the
+    // full bank: getRealFrequency() then reads the actual tuned channel.
+    _si470x.getAllRegisters();
+    uint16_t freq = _si470x.getRealFrequency();
+    _si470x.setFrequency(freq);  // sync the library's cached frequency
+    uint8_t rssi = _si470x.getRssi();
+    bool stereo = _si470x.isStereo();
+    Serial.printf("[RADIO::SCAN::SEEK] FOUND: freq=%u (%.2f MHz), RSSI=%u, stereo=%s\n", 
+        freq, freq / 100.0f, rssi, stereo ? "yes" : "no");
+    return 1;
 }
 
 bool RadioService::_scanStoreStation() {
-    _si470x.getStatus();
-    
-_si470x.getStatus();
-    
+    _si470x.getAllRegisters();
     // Use getRealFrequency() instead of getFrequency()! getFrequency()
     // returns a cached value while getRealFrequency() reads from the
     // register. Both already return 10 kHz-step units (no *10 - see
