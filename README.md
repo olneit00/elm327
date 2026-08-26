@@ -73,15 +73,15 @@ Aktuelle funktionale Oberfläche für Radio, Sendersuche, Stationen und RDS.
 
 ### Klassisches Radio-Frontend
 
-Geplant:
-
 ```text
 /classic-radio
 ```
 
-Mobile-first-Oberfläche im Stil eines Radios der 1930er Jahre mit klassischer Senderskala, mechanisch wirkenden Stationstasten, analoger Uhr und dezent integrierten RDS-Informationen.
+Mobile-first-Oberfläche im Stil eines Radios der 1930er Jahre mit klassischer Senderskala, mechanisch wirkenden Stationstasten, analoger Uhr und dezent integrierten RDS-Informationen. Nutzt dasselbe Backend/dieselben REST-/SSE-Endpunkte wie `/radio`.
 
 Das bestehende `/radio` bleibt dabei als technische Oberfläche erhalten.
+
+Aktueller Stand (siehe `headunit/docs/issue-8-classic-radio-frontend-plan.md`): Radio-Hauptansicht, Stationen/Favoriten, Sendersuchlauf, RDS-Detail, Uhr (vorläufig mit Browserzeit) und ein Teil der Einstellungen sind umgesetzt. Ein eigener `GET /api/time`-Endpoint für eine echte Server-Zeitquelle ist als Folge-Issue geplant.
 
 ### Diagnose
 
