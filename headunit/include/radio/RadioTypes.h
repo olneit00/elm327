@@ -36,7 +36,25 @@ struct RadioStatus {
     bool muted = false;              // Mute state
     uint8_t scanProgress = 0;        // 0-100%
     uint8_t scanCount = 0;           // Stations found during scan
+
+    // RDS detail fields (issue #3 "detailed view of rds texts"). Only
+    // meaningful once RDS verbose mode is enabled (see
+    // RadioService::_initHardware()) - rdsSynced/bler* hardware-read 0
+    // otherwise. Refreshed on every _pollRds() poll regardless of whether
+    // PS/RT text itself changed, so the web frontend can show live sync
+    // status even while no (new) text is available.
+    bool rdsSynced = false;          // RDSS - RDS decoder synchronized
+    uint16_t rdsPiCode = 0;          // PI (Programme Identification), block A, 0x0000 = unknown
+    uint8_t rdsPty = 0;              // PTY (Program Type) code, 0-31
+    bool rdsTp = false;              // Traffic Program flag
+    bool rdsTa = false;              // Traffic Announcement flag (only set within group type 0)
+    uint8_t rdsBlerA = 0;            // Block error rate A, 0=none .. 3=6+/uncorrectable
+    uint8_t rdsBlerB = 0;            // Block error rate B
+    uint8_t rdsBlerC = 0;            // Block error rate C
+    uint8_t rdsBlerD = 0;            // Block error rate D
+    uint32_t lastRdsUpdateMs = 0;    // millis() of the last accepted PS/RT update
 };
+
 
 struct RadioConfig {
     uint16_t lastFrequency = 8750;   // Last tuned frequency
@@ -97,4 +115,22 @@ inline uint8_t volumePercentToHardware(uint8_t percent) {
 inline uint8_t volumeHardwareToPercent(uint8_t hw) {
     if (hw > 15) hw = 15;
     return static_cast<uint8_t>((hw * 100 + 7) / 15);  // Round to nearest
+}
+
+// RDS PTY (Program Type) code -> human-readable name, European RDS table
+// (EN 50067 / IEC 62106). Used by the web frontend's RDS detail view
+// (issue #3). PTY is a 5-bit code (0-31), always present in RDS block B
+// regardless of group type.
+inline const char* rdsProgramTypeName(uint8_t pty) {
+    static const char* const kNames[32] = {
+        "Kein Programmtyp", "Nachrichten", "Zeitgeschehen", "Info",
+        "Sport", "Bildung", "Hoerspiel", "Kultur",
+        "Wissenschaft", "Verschiedenes", "Popmusik", "Rockmusik",
+        "Unterhaltungsmusik", "Klassik (leicht)", "Klassik (ernst)", "Andere Musik",
+        "Wetter", "Finanzen", "Kinderprogramm", "Soziales",
+        "Religion", "Anrufsendung", "Reise", "Freizeit",
+        "Jazz", "Country", "Nationale Musik", "Oldies",
+        "Folk", "Dokumentation", "Alarmtest", "Alarm"
+    };
+    return (pty < 32) ? kNames[pty] : "Unbekannt";
 }

@@ -610,6 +610,69 @@ void RadioService::_pollRds() {
     // in practice, instead of no text at all.
     const bool rdsSynced = _si470x.getRdsSync();
 
+    // getRdsReady()/getRdsSync() only refresh register 0x0A (via
+    // getStatus()). BLERB/C/D (0x0B), PI (0x0C) and block B (0x0D) need the
+    // wider refresh getRdsStatus() does (0x0A-0x0F) - without this call
+    // here, the reads below would see stale data left over from whenever
+    // getRdsText0A()/getRdsText2A() last ran (or never, before any text was
+    // ever decoded).
+    _si470x.getRdsStatus();
+
+    // BLERA ("Block A error rate", register 0x0A bits 10:9) and BLERB/C/D
+    // (register 0x0B bits 15:14 / 13:12 / 11:10) are only meaningful now
+    // that RDS verbose mode is enabled (see setRdsMode(1) in
+    // _initHardware()) - in standard mode they hardware-read 0 always. Per
+    // the datasheet / the library's own getRdsReady() doc comment: "If
+    // BLERA indicates 6 or more errors, the data in RDSA should be
+    // discarded." 0=0 errors, 1=1-2, 2=3-5 (still correctable), 3=6+ or
+    // uncorrectable checkword.
+    const uint16_t reg0b = _si470x.getShadownRegister(0x0B);
+    const uint8_t blerA = (_si470x.getShadownRegister(0x0A) >> 9) & 0x03;
+    const uint8_t blerB = (reg0b >> 14) & 0x03;
+    const uint8_t blerC = (reg0b >> 12) & 0x03;
+    const uint8_t blerD = (reg0b >> 10) & 0x03;
+    const bool blockAOk = blerA < 3;
+
+    // Refresh the live diagnostic fields (sync state + block error rates)
+    // on every poll, independent of whether PS/RT text changed - the web
+    // frontend's RDS detail view (issue #3) wants to show these live even
+    // when no new text is available.
+    {
+        MutexGuard guard(_mutex);
+        if (guard.acquired()) {
+            _status.rdsSynced = rdsSynced;
+            _status.rdsBlerA = blerA;
+            _status.rdsBlerB = blerB;
+            _status.rdsBlerC = blerC;
+            _status.rdsBlerD = blerD;
+        }
+    }
+
+    if (rdsReady) {
+        // PI (Programme Identification, block A / register 0x0C) and the
+        // common part of block B (PTY, TP, and - only within group type 0 -
+        // TA) are present in every RDS group regardless of type, unlike
+        // PS/RT which need specific group types (0A, 2A). Update these
+        // whenever a group was ready and its block A passed the BLERA
+        // check, even if it isn't a PS/RT-carrying group.
+        if (blockAOk) {
+            const uint16_t piCode = _si470x.getShadownRegister(0x0C);
+            const uint8_t pty = _si470x.getRdsProgramType();
+            const uint16_t blockB = _si470x.getShadownRegister(0x0D);
+            const bool tp = (blockB & 0x0400) != 0;               // bit 10
+            const uint8_t groupType = (blockB >> 12) & 0x0F;      // bits 15:12
+            const bool ta = (groupType == 0) && ((blockB & 0x0010) != 0);  // bit 4, group 0 only
+
+            MutexGuard guard(_mutex);
+            if (guard.acquired()) {
+                _status.rdsPiCode = piCode;
+                _status.rdsPty = pty;
+                _status.rdsTp = tp;
+                if (groupType == 0) _status.rdsTa = ta;
+            }
+        }
+    }
+
     // Rate-limited visibility into whether the tuner is asserting RDS-ready
     // and RDS-synchronized at all, independent of whether we ever manage to
     // decode text from it. Distinguishes three different situations that
@@ -632,17 +695,10 @@ void RadioService::_pollRds() {
                       _status.stereo ? "yes" : "no", _status.frequency / 100.0f);
     }
 
-    // BLERA ("Block A error rate", register 0x0A bits 10:9) is only
-    // meaningful now that RDS verbose mode is enabled (see setRdsMode(1) in
-    // _initHardware()) - in standard mode it hardware-reads 0 always. Per
-    // the datasheet / the library's own getRdsReady() doc comment: "If
-    // BLERA indicates 6 or more errors, the data in RDSA should be
-    // discarded." 0=0 errors, 1=1-2, 2=3-5 (still correctable), 3=6+ or
-    // uncorrectable checkword - reject that case outright even if RDSS
-    // reports synchronized, rather than risk decoding a corrupted group.
-    const uint8_t blerA = (_si470x.getShadownRegister(0x0A) >> 9) & 0x03;
-    const bool blockAOk = blerA < 3;
-
+    // blerA/blockAOk were already computed above (see the RDS detail field
+    // refresh block) - reused here to gate PS/RT decoding: reject a group
+    // outright even if RDSS reports synchronized, rather than risk
+    // decoding a corrupted group.
     if (rdsReady && rdsSynced && blockAOk) {
         bool changed = false;
         {
@@ -666,6 +722,8 @@ void RadioService::_pollRds() {
                 changed = true;
                 Serial.printf("[RDS::DEBUG] radio text decoded: \"%.48s\"\n", _status.radioText);
             }
+
+            if (changed) _status.lastRdsUpdateMs = millis();
 
             Serial.printf("[RDS::DEBUG] ready=true state=%d freq=%.2fMHz PS=\"%.8s\" RT=\"%.16s\"\n",
                           (int)_state, _status.frequency / 100.0f,

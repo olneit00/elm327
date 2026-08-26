@@ -461,6 +461,24 @@ String WebServer::_statusToJson(const RadioStatus& status) {
     doc["muted"] = status.muted;
     doc["scanProgress"] = status.scanProgress;
     doc["scanCount"] = status.scanCount;
+
+    // RDS detail fields (issue #3 "detailed view of rds texts").
+    JsonObject rds = doc["rds"].to<JsonObject>();
+    rds["synced"] = status.rdsSynced;
+    char piHex[7];
+    snprintf(piHex, sizeof(piHex), "0x%04X", status.rdsPiCode);
+    rds["piCode"] = piHex;
+    rds["pty"] = status.rdsPty;
+    rds["ptyName"] = rdsProgramTypeName(status.rdsPty);
+    rds["tp"] = status.rdsTp;
+    rds["ta"] = status.rdsTa;
+    JsonObject bler = rds["bler"].to<JsonObject>();
+    bler["a"] = status.rdsBlerA;
+    bler["b"] = status.rdsBlerB;
+    bler["c"] = status.rdsBlerC;
+    bler["d"] = status.rdsBlerD;
+    rds["lastUpdateMs"] = status.lastRdsUpdateMs;
+
     String json;
     serializeJson(doc, json);
     return json;
@@ -526,6 +544,28 @@ const char* WebServer::_getRadioIndexHtml() {
         </div>
 
         <main class="main">
+            <!-- RDS Detail Section -->
+            <section class="rds-section">
+                <div class="rds-head">
+                    <span id="rds-ps" class="rds-ps">--</span>
+                    <span id="rds-sync" class="status-badge">RDS --</span>
+                </div>
+                <div id="rds-rt" class="rds-rt">--</div>
+                <div class="rds-meta">
+                    <span id="rds-pty">PTY: --</span>
+                    <span id="rds-pi">PI: --</span>
+                    <span id="rds-tp" class="rds-flag">TP</span>
+                    <span id="rds-ta" class="rds-flag">TA</span>
+                </div>
+                <div class="rds-bler">
+                    <span>BLER</span>
+                    <span id="rds-bler-a" class="bler-dot" title="Block A"></span>
+                    <span id="rds-bler-b" class="bler-dot" title="Block B"></span>
+                    <span id="rds-bler-c" class="bler-dot" title="Block C"></span>
+                    <span id="rds-bler-d" class="bler-dot" title="Block D"></span>
+                </div>
+            </section>
+
             <!-- Scan Section -->
             <section class="scan-section">
                 <div class="scan-buttons">
@@ -989,6 +1029,83 @@ body {
     border-radius: 4px;
 }
 
+/* RDS detail section */
+.rds-section {
+    margin-bottom: 24px;
+    padding: 16px;
+    background: #121212;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+}
+
+.rds-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+}
+
+.rds-ps {
+    font-weight: 600;
+    font-size: 1.1rem;
+    color: var(--accent);
+}
+
+.rds-rt {
+    margin-top: 8px;
+    font-size: 0.9rem;
+    color: #ccc;
+    min-height: 1.2em;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.rds-meta {
+    display: flex;
+    gap: 12px;
+    margin-top: 10px;
+    font-size: 0.8rem;
+    color: #888;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.rds-flag {
+    padding: 2px 6px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    opacity: 0.35;
+}
+
+.rds-flag.active {
+    opacity: 1;
+    color: var(--accent);
+    border-color: var(--accent);
+}
+
+.rds-bler {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 10px;
+    font-size: 0.8rem;
+    color: #888;
+}
+
+.bler-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #444;
+    display: inline-block;
+}
+
+.bler-dot.bler-0 { background: var(--accent); }
+.bler-dot.bler-1 { background: #cca300; }
+.bler-dot.bler-2 { background: #cc7a00; }
+.bler-dot.bler-3 { background: #c41e3a; }
+
 /* Utilities */
 .hidden {
     display: none !important;
@@ -1037,7 +1154,8 @@ function connectSSE() {
             ['Off', 'Idle', 'Tuning', 'Seeking', 'Scanning'][s.state] || '?';
         updateFreq(s.frequency);
         updateVolDisplay(s.volume);
-        
+        updateRds(s);
+
         if (document.getElementById('mute-btn')) {
             document.getElementById('mute-btn').textContent = 
                 s.muted ? 'Unmute' : 'Mute';
@@ -1070,6 +1188,7 @@ function loadInitialData() {
         .then(s => {
             updateFreq(s.frequency);
             updateVolDisplay(s.volume);
+            updateRds(s);
         })
         .catch(e => console.error('status fetch error:', e));
     
@@ -1235,6 +1354,44 @@ function renderStations(stations) {
             </div>`;
         })
         .join('');
+}
+
+// Update the RDS detail section (PS/RT/PTY/PI/TP/TA/BLER) from a status payload
+function updateRds(s) {
+    const psEl = document.getElementById('rds-ps');
+    if (psEl) psEl.textContent = (s.programService && s.programService.trim()) || '--';
+
+    const rtEl = document.getElementById('rds-rt');
+    if (rtEl) rtEl.textContent = (s.radioText && s.radioText.trim()) || '--';
+
+    const rds = s.rds || {};
+
+    const syncEl = document.getElementById('rds-sync');
+    if (syncEl) {
+        syncEl.textContent = rds.synced ? 'RDS Sync' : 'RDS --';
+        syncEl.classList.toggle('connected', !!rds.synced);
+    }
+
+    const ptyEl = document.getElementById('rds-pty');
+    if (ptyEl) ptyEl.textContent = 'PTY: ' + (rds.ptyName || '--');
+
+    const piEl = document.getElementById('rds-pi');
+    if (piEl) piEl.textContent = 'PI: ' + (rds.piCode || '--');
+
+    const tpEl = document.getElementById('rds-tp');
+    if (tpEl) tpEl.classList.toggle('active', !!rds.tp);
+
+    const taEl = document.getElementById('rds-ta');
+    if (taEl) taEl.classList.toggle('active', !!rds.ta);
+
+    const bler = rds.bler || {};
+    ['a', 'b', 'c', 'd'].forEach((block) => {
+        const el = document.getElementById('rds-bler-' + block);
+        if (!el) return;
+        const level = bler[block];
+        el.className = 'bler-dot' + (level !== undefined ? ' bler-' + level : '');
+        el.title = 'Block ' + block.toUpperCase() + (level !== undefined ? ' (' + level + ')' : '');
+    });
 }
 
 // Tune to the given frequency first, then shift by step (e.g. 100 = +0.1 MHz)

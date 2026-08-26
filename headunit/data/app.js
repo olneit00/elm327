@@ -35,6 +35,7 @@ function connectSSE() {
             ['Off', 'Idle', 'Tuning', 'Seeking', 'Scanning'][s.state] || '?';
         updateFreq(s.frequency);
         updateVolDisplay(s.volume);
+        updateRds(s);
 
         if (document.getElementById('mute-btn')) {
             document.getElementById('mute-btn').textContent =
@@ -68,6 +69,7 @@ function loadInitialData() {
         .then(s => {
             updateFreq(s.frequency);
             updateVolDisplay(s.volume);
+            updateRds(s);
         })
         .catch(e => console.error('status fetch error:', e));
 
@@ -216,6 +218,44 @@ function renderStations(stations) {
             </div>`;
         })
         .join('');
+}
+
+// Update the RDS detail section (PS/RT/PTY/PI/TP/TA/BLER) from a status payload
+function updateRds(s) {
+    const psEl = document.getElementById('rds-ps');
+    if (psEl) psEl.textContent = (s.programService && s.programService.trim()) || '--';
+
+    const rtEl = document.getElementById('rds-rt');
+    if (rtEl) rtEl.textContent = (s.radioText && s.radioText.trim()) || '--';
+
+    const rds = s.rds || {};
+
+    const syncEl = document.getElementById('rds-sync');
+    if (syncEl) {
+        syncEl.textContent = rds.synced ? 'RDS Sync' : 'RDS --';
+        syncEl.classList.toggle('connected', !!rds.synced);
+    }
+
+    const ptyEl = document.getElementById('rds-pty');
+    if (ptyEl) ptyEl.textContent = 'PTY: ' + (rds.ptyName || '--');
+
+    const piEl = document.getElementById('rds-pi');
+    if (piEl) piEl.textContent = 'PI: ' + (rds.piCode || '--');
+
+    const tpEl = document.getElementById('rds-tp');
+    if (tpEl) tpEl.classList.toggle('active', !!rds.tp);
+
+    const taEl = document.getElementById('rds-ta');
+    if (taEl) taEl.classList.toggle('active', !!rds.ta);
+
+    const bler = rds.bler || {};
+    ['a', 'b', 'c', 'd'].forEach((block) => {
+        const el = document.getElementById('rds-bler-' + block);
+        if (!el) return;
+        const level = bler[block];
+        el.className = 'bler-dot' + (level !== undefined ? ' bler-' + level : '');
+        el.title = 'Block ' + block.toUpperCase() + (level !== undefined ? ' (' + level + ')' : '');
+    });
 }
 
 // Tune to the given frequency first, then shift by step (e.g. 10 = +0.1 MHz)
