@@ -91,8 +91,10 @@ function applyStatus(s) {
     setLamp('lamp-rds', !!rds.synced);
 
     const rssiPct = Math.max(0, Math.min(100, Math.round((s.rssi / 75) * 100)));
-    const rssiFill = document.getElementById('cr-rssi-fill');
-    if (rssiFill) rssiFill.style.width = rssiPct + '%';
+    // Gauge sweeps -55deg (empty) to +55deg (full scale) like a small
+    // analog field-strength instrument rather than a modern progress bar.
+    const needle = document.getElementById('cr-rssi-needle');
+    if (needle) needle.style.transform = 'rotate(' + (rssiPct / 100 * 110 - 55) + 'deg)';
 
     currentVolumePercent = s.volume;
     currentMuted = s.muted;
@@ -252,7 +254,15 @@ function renderPresets() {
         const st = favorites[i];
         const btn = document.createElement('button');
         btn.className = 'cr-preset-btn' + (!st ? ' empty' : '') + (st && st.frequency === currentFreq ? ' current' : '');
-        btn.textContent = st ? (st.programService && st.programService.trim() ? st.programService : (st.frequency / 100).toFixed(2)) : (i + 1);
+
+        const lamp = document.createElement('span');
+        lamp.className = 'cr-preset-lamp';
+        const label = document.createElement('span');
+        label.className = 'cr-preset-label';
+        label.textContent = st ? (st.programService && st.programService.trim() ? st.programService : (st.frequency / 100).toFixed(2)) : (i + 1);
+
+        btn.appendChild(lamp);
+        btn.appendChild(label);
         if (st) btn.onclick = () => tuneTo(st.frequency);
         container.appendChild(btn);
     }
@@ -361,6 +371,33 @@ function cancelScan() {
 // Clock screen (V1: browser system time - see plan doc "Phase 2" for
 // the eventual server-side GET /api/time source)
 // ------------------------------------------------------------------
+function buildClockFace() {
+    const face = document.getElementById('cr-clock-ticks');
+    if (!face) return;
+    const radius = 100; // matches .cr-clock-big diameter/2 in classic-radio.css
+    for (let i = 0; i < 12; i++) {
+        const angle = (i * 30) * (Math.PI / 180);
+        const isQuarter = i % 3 === 0;
+        const tick = document.createElement('div');
+        tick.className = 'cr-clock-tick' + (isQuarter ? ' major' : '');
+        const dist = radius - (isQuarter ? 16 : 12);
+        tick.style.left = (radius + Math.sin(angle) * dist) + 'px';
+        tick.style.top = (radius - Math.cos(angle) * dist) + 'px';
+        tick.style.transform = 'translate(-50%, -50%) rotate(' + (i * 30) + 'deg)';
+        face.appendChild(tick);
+
+        if (isQuarter) {
+            const num = document.createElement('div');
+            num.className = 'cr-clock-num';
+            num.textContent = i === 0 ? '12' : String(i * 1);
+            const numDist = radius - 32;
+            num.style.left = (radius + Math.sin(angle) * numDist) + 'px';
+            num.style.top = (radius - Math.cos(angle) * numDist) + 'px';
+            face.appendChild(num);
+        }
+    }
+}
+
 function tickClock() {
     const now = new Date();
     const h = now.getHours() % 12;
@@ -462,6 +499,7 @@ function setupControls() {
 // ------------------------------------------------------------------
 function init() {
     buildDialScale();
+    buildClockFace();
     setupNav();
     setupControls();
     setupSettings();

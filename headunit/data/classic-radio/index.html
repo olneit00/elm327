@@ -8,6 +8,10 @@
 </head>
 <body>
     <div class="cabinet">
+        <div class="cr-screw cr-screw-tl"></div>
+        <div class="cr-screw cr-screw-tr"></div>
+        <div class="cr-screw cr-screw-bl"></div>
+        <div class="cr-screw cr-screw-br"></div>
 
         <!-- ===================== Radio (Hauptansicht) ===================== -->
         <section id="screen-radio" class="screen active">
@@ -18,62 +22,77 @@
                         <div class="cr-hand cr-hand-min" id="mini-hand-min"></div>
                     </div>
                 </div>
+                <div class="cr-nameplate">Kristall&thinsp;·&thinsp;Super</div>
                 <div class="cr-lamps">
                     <div class="cr-lamp" id="lamp-stereo" title="Stereo"><span>ST</span></div>
                     <div class="cr-lamp" id="lamp-rds" title="RDS Sync"><span>RDS</span></div>
                 </div>
             </header>
 
-            <div class="cr-dial-window">
-                <div class="cr-dial-scale" id="cr-dial-scale">
-                    <!-- tick marks + MHz labels injected by JS -->
-                    <div class="cr-pointer" id="cr-pointer"></div>
-                </div>
-                <div class="cr-dial-readout">
-                    <span id="cr-freq">--.--</span><small>MHz</small>
-                </div>
-            </div>
+            <div class="cr-radio-layout">
+                <div class="cr-radio-primary">
+                    <div class="cr-dial-window">
+                        <div class="cr-dial-glass">
+                            <div class="cr-dial-scale" id="cr-dial-scale">
+                                <!-- tick marks + MHz labels injected by JS -->
+                                <div class="cr-pointer" id="cr-pointer"></div>
+                            </div>
+                        </div>
+                        <div class="cr-dial-readout">
+                            <span id="cr-freq">--.--</span><small>MHz</small>
+                        </div>
+                    </div>
 
-            <div class="cr-station-text">
-                <div class="cr-ps" id="cr-ps">&nbsp;</div>
-                <div class="cr-rt" id="cr-rt">&nbsp;</div>
-            </div>
-
-            <div class="cr-instruments">
-                <div class="cr-meter" title="Signalstärke">
-                    <span class="cr-meter-label">Feld</span>
-                    <div class="cr-meter-track"><div class="cr-meter-fill" id="cr-rssi-fill"></div></div>
-                </div>
-            </div>
-
-            <div class="cr-controls">
-                <div class="cr-knob-group">
-                    <button class="cr-knob" id="knob-volume" aria-label="Lautstärke">
-                        <div class="cr-knob-face"><div class="cr-knob-notch"></div></div>
-                    </button>
-                    <div class="cr-knob-caption">Lautstärke</div>
-                    <div class="cr-knob-buttons">
-                        <button id="vol-minus" class="cr-knob-btn">−</button>
-                        <span id="cr-vol-value" class="cr-knob-value">50%</span>
-                        <button id="vol-plus" class="cr-knob-btn">+</button>
+                    <div class="cr-station-text">
+                        <div class="cr-ps-plate"><span id="cr-ps">&nbsp;</span></div>
+                        <div class="cr-rt-slot"><span id="cr-rt">&nbsp;</span></div>
                     </div>
                 </div>
 
-                <div class="cr-knob-group">
-                    <button class="cr-knob" id="knob-tune" aria-label="Feinabstimmung">
-                        <div class="cr-knob-face"><div class="cr-knob-notch"></div></div>
-                    </button>
-                    <div class="cr-knob-caption">Sender</div>
-                    <div class="cr-knob-buttons">
-                        <button id="tune-minus" class="cr-knob-btn">◀</button>
-                        <button id="tune-mute" class="cr-knob-btn cr-mute-btn">Mute</button>
-                        <button id="tune-plus" class="cr-knob-btn">▶</button>
+                <div class="cr-radio-secondary">
+                    <div class="cr-instruments">
+                        <div class="cr-gauge" title="Feldstärke">
+                            <div class="cr-gauge-face">
+                                <div class="cr-gauge-ticks"></div>
+                                <div class="cr-gauge-needle" id="cr-rssi-needle"></div>
+                                <div class="cr-gauge-cap"></div>
+                            </div>
+                            <span class="cr-gauge-label">Feld</span>
+                        </div>
+                    </div>
+
+                    <div class="cr-controls">
+                        <div class="cr-knob-group">
+                            <button class="cr-knob cr-knob-volume" id="knob-volume" aria-label="Lautstärke">
+                                <div class="cr-knob-ring"></div>
+                                <div class="cr-knob-face"><div class="cr-knob-notch"></div></div>
+                            </button>
+                            <div class="cr-knob-caption">Lautstärke</div>
+                            <div class="cr-knob-buttons">
+                                <button id="vol-minus" class="cr-knob-btn">−</button>
+                                <span id="cr-vol-value" class="cr-knob-value">50%</span>
+                                <button id="vol-plus" class="cr-knob-btn">+</button>
+                            </div>
+                        </div>
+
+                        <div class="cr-knob-group">
+                            <button class="cr-knob cr-knob-tuning" id="knob-tune" aria-label="Feinabstimmung">
+                                <div class="cr-knob-ring"></div>
+                                <div class="cr-knob-face"><div class="cr-knob-notch"></div></div>
+                            </button>
+                            <div class="cr-knob-caption">Sender</div>
+                            <div class="cr-knob-buttons">
+                                <button id="tune-minus" class="cr-knob-btn">◀</button>
+                                <button id="tune-mute" class="cr-knob-btn cr-mute-btn">Mute</button>
+                                <button id="tune-plus" class="cr-knob-btn">▶</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="cr-presets" id="cr-presets">
+                        <!-- 6 preset buttons injected by JS -->
                     </div>
                 </div>
-            </div>
-
-            <div class="cr-presets" id="cr-presets">
-                <!-- 6 preset buttons injected by JS -->
             </div>
         </section>
 
@@ -97,10 +116,15 @@
             </div>
         </div>
 
-        <!-- ===================== RDS-Detail ===================== -->
+        <!-- ===================== RDS-Detail (Serviceklappe) ===================== -->
         <section id="screen-rds" class="screen">
-            <header class="cr-screen-header"><h1>RDS-Informationen</h1></header>
-            <div class="cr-rds-panel">
+            <header class="cr-screen-header"><h1>RDS · Servicepanel</h1></header>
+            <div class="cr-service-panel">
+                <div class="cr-service-head">
+                    <span class="cr-service-rivet"></span>
+                    <span>Empfänger-Diagnose</span>
+                    <span class="cr-service-rivet"></span>
+                </div>
                 <div class="cr-rds-row"><span>PS</span><b id="rds-ps">--</b></div>
                 <div class="cr-rds-row"><span>RT</span><b id="rds-rt">--</b></div>
                 <div class="cr-rds-row"><span>PI</span><b id="rds-pi">--</b></div>
@@ -127,6 +151,7 @@
             <header class="cr-screen-header"><h1>Uhr</h1></header>
             <div class="cr-clock-big-wrap">
                 <div class="cr-clock-big" id="cr-clock-big">
+                    <div class="cr-clock-big-face" id="cr-clock-ticks"></div>
                     <div class="cr-hand-big cr-hand-hour" id="big-hand-hour"></div>
                     <div class="cr-hand-big cr-hand-min" id="big-hand-min"></div>
                     <div class="cr-hand-big cr-hand-sec" id="big-hand-sec"></div>

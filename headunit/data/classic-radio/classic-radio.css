@@ -1,28 +1,35 @@
 /* =========================================================
    Opel Radio · Classic 1935 frontend
    Wood/bakelite cabinet, brass trim, amber-lit dial.
+
+   Design pass v2 (PR #10 review): the goal is "technology modern,
+   presentation 1935" - every control keeps its function but should
+   read as a mechanical instrument first, a touchscreen second.
    ========================================================= */
 
 :root {
-    --wood-dark: #2b1a10;
-    --wood-mid: #3f2415;
+    --wood-dark: #1c1108;
+    --wood-mid: #3a2213;
     --wood-light: #5a3420;
-    --bakelite: #1c1210;
+    --wood-grain: rgba(0, 0, 0, 0.18);
+    --bakelite: #171010;
+    --bakelite-light: #2a1d16;
     --brass: #c9a86a;
-    --brass-dark: #8a6b3a;
-    --brass-light: #e8d5a0;
+    --brass-dark: #7c5f34;
+    --brass-darker: #4d3a1e;
+    --brass-light: #ecdca0;
     --dial-cream: #f3e2b3;
     --dial-amber: #e0a437;
-    --pointer-red: #c62828;
-    --fg: #f0e6d2;
-    --fg-dim: #b9a988;
-    --danger: #8a2020;
+    --pointer-red: #b3241f;
+    --fg: #ecdfc4;
+    --fg-dim: #b3a17f;
+    --danger: #7a1f1f;
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 body {
-    font-family: 'Georgia', 'Times New Roman', serif;
+    font-family: 'Palatino Linotype', 'Book Antiqua', Georgia, 'Times New Roman', serif;
     background: #000;
     color: var(--fg);
     display: flex;
@@ -37,49 +44,89 @@ body {
     max-width: 480px;
     min-height: 100vh;
     background:
-        radial-gradient(ellipse at top, var(--wood-light) 0%, var(--wood-mid) 45%, var(--wood-dark) 100%);
-    border-left: 6px solid var(--brass-dark);
-    border-right: 6px solid var(--brass-dark);
+        repeating-linear-gradient(100deg, var(--wood-grain) 0px, transparent 2px, transparent 7px),
+        radial-gradient(ellipse at 30% 0%, var(--wood-light) 0%, var(--wood-mid) 45%, var(--wood-dark) 100%);
+    border-left: 8px solid var(--brass-darker);
+    border-right: 8px solid var(--brass-darker);
+    box-shadow: inset 0 0 60px rgba(0, 0, 0, 0.65), inset 0 0 4px 2px rgba(0, 0, 0, 0.8);
     display: flex;
     flex-direction: column;
     position: relative;
     overflow: hidden;
 }
 
+/* Decorative cabinet corner screws - reinforces "real device" feel */
+.cr-screw {
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, var(--brass-light), var(--brass-darker) 85%);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+    z-index: 5;
+}
+.cr-screw::after {
+    content: '';
+    position: absolute;
+    top: 50%; left: 12%;
+    width: 76%; height: 1.4px;
+    background: rgba(0, 0, 0, 0.6);
+    transform: translateY(-50%) rotate(35deg);
+}
+.cr-screw-tl { top: 8px; left: 8px; }
+.cr-screw-tr { top: 8px; right: 8px; }
+.cr-screw-bl { bottom: 66px; left: 8px; }
+.cr-screw-br { bottom: 66px; right: 8px; }
+
 .screen {
     display: none;
     flex: 1;
-    padding: 14px 16px 90px;
+    padding: 16px 14px 88px;
     overflow-y: auto;
 }
 
 .screen.active { display: flex; flex-direction: column; }
 
-/* ---------- Top bar: mini clock + status lamps ---------- */
+/* ---------- Top bar: mini clock + nameplate + status lamps ---------- */
 .cr-topbar {
     display: flex;
     justify-content: space-between;
     align-items: center;
     margin-bottom: 10px;
+    gap: 8px;
+}
+
+.cr-nameplate {
+    font-style: italic;
+    font-variant: small-caps;
+    letter-spacing: 1.5px;
+    font-size: 0.8rem;
+    color: var(--brass-light);
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.6), 0 0 6px rgba(224, 164, 55, 0.25);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .cr-clock-mini {
-    width: 46px;
-    height: 46px;
+    width: 42px;
+    height: 42px;
     border-radius: 50%;
-    background: radial-gradient(circle at 35% 30%, var(--brass-light), var(--brass-dark) 80%);
+    background: radial-gradient(circle at 35% 30%, var(--brass-light), var(--brass-darker) 80%);
     display: flex;
     align-items: center;
     justify-content: center;
-    box-shadow: 0 0 0 2px var(--wood-dark), inset 0 0 6px rgba(0,0,0,0.5);
+    box-shadow: 0 0 0 2px var(--wood-dark), inset 0 0 6px rgba(0, 0, 0, 0.6), 0 1px 2px rgba(0, 0, 0, 0.6);
+    flex-shrink: 0;
 }
 
 .cr-clock-face {
-    width: 34px;
-    height: 34px;
+    width: 32px;
+    height: 32px;
     border-radius: 50%;
     background: var(--dial-cream);
     position: relative;
+    box-shadow: inset 0 0 4px rgba(120, 80, 20, 0.5);
 }
 
 .cr-hand {
@@ -90,70 +137,99 @@ body {
     background: var(--bakelite);
     border-radius: 2px;
 }
-.cr-hand-hour { width: 2px; height: 9px; margin-left: -1px; }
-.cr-hand-min { width: 1.5px; height: 13px; margin-left: -0.75px; }
+.cr-hand-hour { width: 2px; height: 8px; margin-left: -1px; }
+.cr-hand-min { width: 1.5px; height: 12px; margin-left: -0.75px; }
 
-.cr-lamps { display: flex; gap: 8px; }
+.cr-lamps { display: flex; gap: 6px; flex-shrink: 0; }
 
 .cr-lamp {
-    width: 34px;
-    height: 34px;
+    width: 30px;
+    height: 30px;
     border-radius: 50%;
-    background: radial-gradient(circle at 35% 30%, #4a3a2a, #241a10 80%);
-    box-shadow: 0 0 0 2px var(--brass-dark), inset 0 0 4px rgba(0,0,0,0.6);
+    background: radial-gradient(circle at 35% 30%, #3a2e20, #1a1208 80%);
+    box-shadow: 0 0 0 2px var(--brass-darker), inset 0 0 4px rgba(0, 0, 0, 0.7);
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 0.55rem;
+    font-size: 0.5rem;
     font-weight: 700;
     letter-spacing: 0.5px;
-    color: #6a5a48;
+    color: #5a4a38;
     transition: all 0.3s;
 }
 
 .cr-lamp.on {
     background: radial-gradient(circle at 35% 30%, #ffdd88, var(--dial-amber) 80%);
     color: #3a2400;
-    box-shadow: 0 0 10px 2px rgba(224, 164, 55, 0.8), 0 0 0 2px var(--brass);
+    box-shadow: 0 0 8px 2px rgba(224, 164, 55, 0.8), 0 0 0 2px var(--brass);
 }
 
-/* ---------- Dial ---------- */
+/* ---------- Two-column layout hook for landscape (media query below) --- */
+.cr-radio-layout { display: flex; flex-direction: column; flex: 1; }
+.cr-radio-primary { display: flex; flex-direction: column; }
+.cr-radio-secondary { display: flex; flex-direction: column; flex: 1; }
+
+/* ---------- Dial: the dominant element on the main screen ---------- */
 .cr-dial-window {
-    background: var(--bakelite);
-    border-radius: 10px;
-    padding: 14px 12px 10px;
+    background: linear-gradient(to bottom, #241610, var(--bakelite) 40%, #100a08);
+    border-radius: 12px;
+    padding: 16px 14px 12px;
     box-shadow:
-        0 0 0 3px var(--brass-dark),
+        0 0 0 3px var(--brass-darker),
         0 0 0 5px var(--wood-dark),
-        inset 0 2px 10px rgba(0,0,0,0.7);
-    margin-bottom: 12px;
+        0 6px 14px rgba(0, 0, 0, 0.6),
+        inset 0 3px 14px rgba(0, 0, 0, 0.85);
+    margin-bottom: 10px;
+}
+
+.cr-dial-glass {
+    position: relative;
+    border-radius: 6px;
+    padding: 3px;
+    background: linear-gradient(135deg, rgba(255,255,255,0.12), rgba(0,0,0,0.3));
+    box-shadow: inset 0 0 8px rgba(0, 0, 0, 0.6);
 }
 
 .cr-dial-scale {
     position: relative;
-    height: 60px;
-    background: linear-gradient(to bottom, #f6e7ba, var(--dial-cream) 55%, #d8bd7c);
+    height: 108px;
+    background:
+        linear-gradient(to bottom, rgba(255,255,255,0.35), transparent 30%),
+        radial-gradient(ellipse at 50% -20%, rgba(255, 220, 150, 0.5), transparent 60%),
+        linear-gradient(to bottom, #f7ecc8, var(--dial-cream) 45%, #d3b26b 90%, #b8934f);
     border-radius: 4px;
     overflow: hidden;
-    box-shadow: inset 0 0 12px rgba(120, 80, 20, 0.4);
+    box-shadow: inset 0 0 18px rgba(110, 70, 15, 0.55), inset 0 0 2px 1px rgba(0,0,0,0.4);
+}
+
+/* subtle vignette at the scale's edges so it reads as curved glass */
+.cr-dial-scale::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(to right, rgba(0,0,0,0.35), transparent 12%, transparent 88%, rgba(0,0,0,0.35));
+    pointer-events: none;
 }
 
 .cr-tick {
     position: absolute;
     bottom: 0;
     width: 1px;
-    background: #6b4a20;
-    opacity: 0.6;
+    background: #5a3c14;
+    opacity: 0.55;
 }
-.cr-tick.major { width: 2px; opacity: 0.9; }
+.cr-tick.major { width: 2px; opacity: 0.95; background: #4a2e0c; }
 
 .cr-tick-label {
     position: absolute;
-    bottom: 22px;
+    bottom: 34px;
     transform: translateX(-50%);
-    font-size: 0.65rem;
-    color: #5a3c14;
-    font-weight: 600;
+    font-size: 0.78rem;
+    font-variant: small-caps;
+    letter-spacing: 0.5px;
+    color: #4a2e0c;
+    font-weight: 700;
+    text-shadow: 0 1px 0 rgba(255, 240, 200, 0.4);
 }
 
 .cr-pointer {
@@ -162,128 +238,230 @@ body {
     bottom: 0;
     width: 2px;
     background: var(--pointer-red);
-    box-shadow: 0 0 6px 1px rgba(198, 40, 40, 0.8);
+    box-shadow: 0 0 8px 1px rgba(179, 36, 31, 0.85);
     left: 0%;
     transition: left 0.25s ease-out;
+    z-index: 2;
 }
 .cr-pointer::before {
     content: '';
     position: absolute;
-    top: -4px;
-    left: -4px;
-    width: 10px;
-    height: 10px;
+    top: -5px;
+    left: -5px;
+    width: 12px;
+    height: 12px;
     background: var(--pointer-red);
     border-radius: 50% 50% 50% 0;
     transform: rotate(45deg);
+    box-shadow: 0 1px 2px rgba(0,0,0,0.5);
 }
 
 .cr-dial-readout {
     text-align: center;
-    margin-top: 8px;
+    margin-top: 10px;
     color: var(--brass-light);
     font-variant-numeric: tabular-nums;
 }
-.cr-dial-readout span { font-size: 1.8rem; font-weight: 700; }
-.cr-dial-readout small { font-size: 0.9rem; margin-left: 4px; color: var(--fg-dim); }
+.cr-dial-readout span { font-size: 2rem; font-weight: 700; text-shadow: 0 0 8px rgba(224, 164, 55, 0.3); }
+.cr-dial-readout small { font-size: 0.85rem; margin-left: 4px; color: var(--fg-dim); font-variant: small-caps; }
 
-/* ---------- Station text ---------- */
-.cr-station-text { text-align: center; margin-bottom: 10px; min-height: 44px; }
-.cr-ps { font-size: 1.1rem; font-weight: 700; color: var(--brass-light); }
-.cr-rt {
-    font-size: 0.8rem;
-    color: var(--fg-dim);
+/* ---------- Station text: PS as an inset nameplate, RT as a slim slot -- */
+.cr-station-text { margin-bottom: 10px; }
+
+.cr-ps-plate {
+    text-align: center;
+    background: linear-gradient(to bottom, #e9d9a8, #cbb277);
+    color: #2a1c08;
+    border-radius: 4px;
+    padding: 5px 10px;
+    font-weight: 700;
+    font-size: 1rem;
+    box-shadow: inset 0 1px 2px rgba(255,255,255,0.6), inset 0 -2px 3px rgba(0,0,0,0.3), 0 1px 0 rgba(0,0,0,0.4);
+    min-height: 1.3em;
+}
+
+.cr-rt-slot {
+    margin-top: 4px;
+    text-align: center;
+    background: #100a06;
+    color: #b89b5a;
+    border-radius: 3px;
+    padding: 3px 10px;
+    font-size: 0.72rem;
+    letter-spacing: 0.3px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    box-shadow: inset 0 1px 3px rgba(0,0,0,0.8);
+    min-height: 1.1em;
 }
 
-/* ---------- Instruments (signal meter) ---------- */
-.cr-instruments { margin-bottom: 14px; }
-.cr-meter { display: flex; align-items: center; gap: 8px; }
-.cr-meter-label { font-size: 0.7rem; color: var(--fg-dim); width: 40px; }
-.cr-meter-track {
-    flex: 1;
-    height: 8px;
-    background: #1a1008;
-    border-radius: 4px;
-    box-shadow: inset 0 0 4px rgba(0,0,0,0.8), 0 0 0 1px var(--brass-dark);
+/* ---------- Field-strength gauge (small analog instrument) ---------- */
+.cr-instruments { display: flex; justify-content: center; margin-bottom: 10px; }
+
+.cr-gauge { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+
+.cr-gauge-face {
+    position: relative;
+    width: 88px;
+    height: 48px;
     overflow: hidden;
+    border-radius: 44px 44px 0 0;
+    background: radial-gradient(circle at 50% 100%, var(--dial-cream) 0%, #cbab63 75%, #9c7c40 100%);
+    box-shadow: 0 0 0 2px var(--brass-darker), inset 0 0 8px rgba(90, 60, 10, 0.5);
 }
-.cr-meter-fill {
-    height: 100%;
-    width: 0%;
-    background: linear-gradient(to right, #7a5a1a, var(--dial-amber));
-    transition: width 0.3s;
+
+.cr-gauge-ticks {
+    position: absolute;
+    inset: 0;
+    background:
+        repeating-conic-gradient(from -55deg at 50% 100%,
+            #4a2e0c 0deg 1.2deg,
+            transparent 1.2deg 13.75deg);
+    -webkit-mask-image: radial-gradient(circle at 50% 100%, transparent 60%, #000 62%, #000 100%);
+    mask-image: radial-gradient(circle at 50% 100%, transparent 60%, #000 62%, #000 100%);
+    opacity: 0.8;
+}
+
+.cr-gauge-needle {
+    position: absolute;
+    left: 50%;
+    bottom: 0;
+    width: 2px;
+    height: 40px;
+    margin-left: -1px;
+    background: var(--pointer-red);
+    transform-origin: 50% 100%;
+    transform: rotate(-55deg);
+    transition: transform 0.3s ease-out;
+    box-shadow: 0 0 3px rgba(179, 36, 31, 0.7);
+}
+
+.cr-gauge-cap {
+    position: absolute;
+    bottom: -5px;
+    left: 50%;
+    width: 10px;
+    height: 10px;
+    margin-left: -5px;
+    border-radius: 50%;
+    background: var(--brass);
+    box-shadow: 0 0 0 1px var(--bakelite);
+}
+
+.cr-gauge-label {
+    font-size: 0.65rem;
+    font-variant: small-caps;
+    letter-spacing: 1px;
+    color: var(--fg-dim);
 }
 
 /* ---------- Knobs ---------- */
 .cr-controls {
     display: flex;
     justify-content: space-around;
-    margin-bottom: 14px;
+    margin-bottom: 12px;
 }
 
 .cr-knob-group { display: flex; flex-direction: column; align-items: center; gap: 6px; }
 
 .cr-knob {
-    width: 78px;
-    height: 78px;
-    border-radius: 50%;
+    width: 84px;
+    height: 84px;
     border: none;
-    background: radial-gradient(circle at 32% 28%, var(--brass-light) 0%, var(--brass) 45%, var(--brass-dark) 100%);
-    box-shadow: 0 4px 6px rgba(0,0,0,0.6), inset 0 0 6px rgba(255,255,255,0.3);
-    cursor: pointer;
+    background: none;
     position: relative;
+    cursor: pointer;
+}
+
+/* Knurled brass ring behind the cap - gives the knob mechanical depth */
+.cr-knob-ring {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background:
+        repeating-conic-gradient(#c9a86a 0deg 4deg, #8a6b3a 4deg 8deg);
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.6), inset 0 0 4px rgba(0, 0, 0, 0.4);
 }
 
 .cr-knob-face {
     position: absolute;
-    inset: 10px;
+    inset: 12px;
     border-radius: 50%;
-    background: radial-gradient(circle at 35% 30%, #4a3220, var(--bakelite) 75%);
-    box-shadow: inset 0 0 6px rgba(0,0,0,0.8);
+    background: radial-gradient(circle at 35% 28%, #4a3220, var(--bakelite) 75%);
+    box-shadow: inset 0 0 8px rgba(0, 0, 0, 0.85), 0 1px 1px rgba(255,255,255,0.08);
+    transform: rotate(0deg);
 }
 
 .cr-knob-notch {
     position: absolute;
-    top: 6px;
+    top: 7px;
     left: 50%;
     width: 3px;
-    height: 12px;
+    height: 14px;
     margin-left: -1.5px;
     background: var(--brass-light);
     border-radius: 2px;
+    box-shadow: 0 0 3px rgba(224, 164, 55, 0.6);
 }
 
-.cr-knob-caption { font-size: 0.75rem; color: var(--fg-dim); }
+/* Volume: continuous rotary feel - graduation ring in a warm brass tone. */
+.cr-knob-volume .cr-knob-ring {
+    background: repeating-conic-gradient(from -135deg, #c9a86a 0deg 3deg, #8a6b3a 3deg 27deg);
+}
+
+/* Tuning: not a continuous rotation control (it steps), so it gets a
+   distinct double-ring "vernier" look with a directional arrow instead
+   of a plain notch, to visually separate it from the volume knob. */
+.cr-knob-tuning .cr-knob-ring {
+    background:
+        radial-gradient(circle, transparent 62%, var(--brass-darker) 63% 68%, transparent 69%),
+        repeating-conic-gradient(#c9a86a 0deg 4deg, #8a6b3a 4deg 8deg);
+}
+.cr-knob-tuning .cr-knob-notch {
+    width: 0; height: 0;
+    background: none;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-bottom: 9px solid var(--brass-light);
+    top: 8px;
+    margin-left: -5px;
+}
+
+.cr-knob-caption {
+    font-size: 0.72rem;
+    color: var(--fg-dim);
+    font-variant: small-caps;
+    letter-spacing: 0.5px;
+}
 
 .cr-knob-buttons { display: flex; align-items: center; gap: 6px; }
 
 .cr-knob-btn {
-    min-width: 36px;
-    min-height: 36px;
-    border-radius: 8px;
-    border: 1px solid var(--brass-dark);
-    background: linear-gradient(to bottom, #4a3320, #2a1c10);
+    min-width: 34px;
+    min-height: 34px;
+    border-radius: 6px;
+    border: 1px solid var(--brass-darker);
+    background: linear-gradient(to bottom, #4a3320, #241708);
     color: var(--brass-light);
-    font-size: 1rem;
+    font-size: 0.95rem;
     font-weight: 700;
     cursor: pointer;
+    box-shadow: 0 2px 0 rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.1);
 }
-.cr-knob-btn:active { background: var(--brass-dark); color: var(--bakelite); }
+.cr-knob-btn:active { background: var(--brass-dark); color: var(--bakelite); transform: translateY(1px); box-shadow: none; }
 
-.cr-mute-btn { font-size: 0.65rem; padding: 0 6px; }
+.cr-mute-btn { font-size: 0.6rem; padding: 0 5px; }
 
 .cr-knob-value {
-    min-width: 42px;
+    min-width: 40px;
     text-align: center;
     font-variant-numeric: tabular-nums;
     color: var(--brass-light);
-    font-size: 0.85rem;
+    font-size: 0.8rem;
 }
 
-/* ---------- Preset buttons ---------- */
+/* ---------- Preset buttons: mechanical pushbuttons with label plates -- */
 .cr-presets {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
@@ -292,23 +470,60 @@ body {
 }
 
 .cr-preset-btn {
-    height: 52px;
-    border-radius: 6px;
+    height: 58px;
+    border-radius: 5px;
     border: none;
-    background: linear-gradient(to bottom, #5a3d24, #2e1d10);
-    box-shadow: 0 3px 0 var(--wood-dark), inset 0 1px 0 rgba(255,255,255,0.15), 0 0 0 1px var(--brass-dark);
-    color: var(--brass-light);
-    font-size: 0.72rem;
-    font-weight: 600;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    background: linear-gradient(to bottom, #6a4a2c, #3a2410 55%, #241608);
+    box-shadow:
+        0 4px 0 var(--wood-dark),
+        inset 0 1px 0 rgba(255,255,255,0.18),
+        inset 0 -6px 8px rgba(0,0,0,0.35),
+        0 0 0 1px var(--brass-darker);
+    cursor: pointer;
     padding: 4px;
+}
+.cr-preset-btn:active {
+    transform: translateY(3px);
+    box-shadow: 0 1px 0 var(--wood-dark), inset 0 2px 6px rgba(0,0,0,0.5), 0 0 0 1px var(--brass-darker);
+}
+
+.cr-preset-lamp {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #3a2e20;
+    box-shadow: inset 0 0 2px rgba(0,0,0,0.8);
+}
+
+.cr-preset-label {
+    background: linear-gradient(to bottom, #e9d9a8, #cbb277);
+    color: #2a1c08;
+    font-size: 0.62rem;
+    font-weight: 700;
+    padding: 2px 6px;
+    border-radius: 2px;
+    max-width: 92%;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    cursor: pointer;
+    box-shadow: inset 0 1px 1px rgba(255,255,255,0.5);
 }
-.cr-preset-btn:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--wood-dark), 0 0 0 1px var(--brass-dark); }
-.cr-preset-btn.current { background: linear-gradient(to bottom, var(--dial-amber), #8a5a10); color: #2a1a00; }
-.cr-preset-btn.empty { opacity: 0.4; }
+
+/* Current station: pressed-in appearance + lit pilot lamp, not a glow ring */
+.cr-preset-btn.current {
+    transform: translateY(2px);
+    box-shadow: inset 0 2px 6px rgba(0,0,0,0.5), 0 0 0 1px var(--dial-amber);
+}
+.cr-preset-btn.current .cr-preset-lamp {
+    background: radial-gradient(circle at 35% 30%, #ffdd88, var(--dial-amber));
+    box-shadow: 0 0 4px 1px rgba(224, 164, 55, 0.9);
+}
+.cr-preset-btn.empty { opacity: 0.4; cursor: default; }
 
 /* ---------- Generic screen header / brass buttons ---------- */
 .cr-screen-header {
@@ -317,20 +532,25 @@ body {
     align-items: center;
     margin-bottom: 12px;
 }
-.cr-screen-header h1 { font-size: 1.2rem; color: var(--brass-light); }
+.cr-screen-header h1 {
+    font-size: 1.05rem;
+    color: var(--brass-light);
+    font-variant: small-caps;
+    letter-spacing: 1px;
+}
 
 .cr-btn-brass {
     padding: 10px 16px;
-    border-radius: 8px;
+    border-radius: 6px;
     border: none;
     background: linear-gradient(to bottom, var(--brass-light), var(--brass-dark));
     color: #2a1a00;
     font-weight: 700;
     cursor: pointer;
-    box-shadow: 0 2px 0 rgba(0,0,0,0.4);
+    box-shadow: 0 2px 0 rgba(0,0,0,0.5);
 }
 .cr-btn-brass:active { transform: translateY(1px); box-shadow: none; }
-.cr-btn-danger { background: linear-gradient(to bottom, #d05050, var(--danger)); color: #fff; }
+.cr-btn-danger { background: linear-gradient(to bottom, #c05a5a, var(--danger)); color: #fff; }
 
 /* ---------- Station list ---------- */
 .cr-station-list { list-style: none; display: flex; flex-direction: column; gap: 8px; }
@@ -340,12 +560,12 @@ body {
     align-items: center;
     gap: 10px;
     padding: 10px 12px;
-    background: linear-gradient(to bottom, #3a2818, #241708);
-    border-radius: 8px;
-    box-shadow: 0 0 0 1px var(--brass-dark);
+    background: linear-gradient(to bottom, #3a2818, #201408);
+    border-radius: 6px;
+    box-shadow: 0 0 0 1px var(--brass-darker), inset 0 1px 0 rgba(255,255,255,0.06);
     cursor: pointer;
 }
-.cr-station-item.current { box-shadow: 0 0 0 2px var(--dial-amber); }
+.cr-station-item.current { box-shadow: inset 0 2px 6px rgba(0,0,0,0.4), 0 0 0 1px var(--dial-amber); }
 
 .cr-station-fav {
     background: none;
@@ -375,8 +595,8 @@ body {
 
 .cr-overlay-panel {
     background: var(--wood-mid);
-    border-radius: 12px;
-    box-shadow: 0 0 0 3px var(--brass-dark);
+    border-radius: 10px;
+    box-shadow: 0 0 0 3px var(--brass-darker);
     padding: 24px;
     width: 85%;
     max-width: 340px;
@@ -394,53 +614,115 @@ body {
 }
 @keyframes cr-blink { 50% { opacity: 0.3; } }
 
-.cr-overlay-panel h2 { font-size: 1rem; margin-bottom: 14px; color: var(--brass-light); }
+.cr-overlay-panel h2 { font-size: 0.95rem; margin-bottom: 14px; color: var(--brass-light); font-variant: small-caps; }
+.cr-meter-track {
+    height: 8px;
+    background: #140d06;
+    border-radius: 4px;
+    box-shadow: inset 0 0 4px rgba(0,0,0,0.8), 0 0 0 1px var(--brass-darker);
+    overflow: hidden;
+}
+.cr-meter-fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(to right, #7a5a1a, var(--dial-amber));
+    transition: width 0.3s;
+}
 .cr-scan-track { margin-bottom: 10px; }
 .cr-overlay-panel p { margin-bottom: 16px; color: var(--fg-dim); font-size: 0.85rem; }
 
-/* ---------- RDS detail panel ---------- */
-.cr-rds-panel {
-    background: var(--bakelite);
-    border-radius: 8px;
-    box-shadow: 0 0 0 2px var(--brass-dark);
-    padding: 10px 14px;
+/* ---------- RDS "service panel" ---------- */
+.cr-service-panel {
+    background: linear-gradient(to bottom, #201812, #14100c);
+    border-radius: 6px;
+    box-shadow: 0 0 0 2px var(--brass-darker), inset 0 0 14px rgba(0,0,0,0.6);
+    padding: 0 14px 10px;
+    font-family: 'Courier New', Courier, monospace;
 }
+
+.cr-service-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin: 0 -14px 8px;
+    padding: 8px 14px;
+    background: linear-gradient(to bottom, #3a2c1c, #241a10);
+    box-shadow: inset 0 -1px 0 rgba(0,0,0,0.4), 0 1px 0 rgba(255,255,255,0.05);
+    font-size: 0.7rem;
+    letter-spacing: 1px;
+    color: var(--brass-light);
+    text-transform: uppercase;
+}
+.cr-service-rivet {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, var(--brass-light), var(--brass-darker));
+    box-shadow: 0 1px 1px rgba(0,0,0,0.6);
+}
+
 .cr-rds-row {
     display: flex;
     justify-content: space-between;
-    padding: 8px 0;
-    border-bottom: 1px solid rgba(201, 168, 106, 0.15);
-    font-size: 0.85rem;
+    padding: 7px 0;
+    border-bottom: 1px dashed rgba(201, 168, 106, 0.15);
+    font-size: 0.8rem;
 }
 .cr-rds-row:last-child { border-bottom: none; }
 .cr-rds-row span { color: var(--fg-dim); }
-.cr-rds-row b { color: var(--brass-light); font-weight: 600; text-align: right; }
+.cr-rds-row b { color: var(--dial-amber); font-weight: 600; text-align: right; }
 
 .cr-bler-dots { display: flex; gap: 6px; }
-.bler-dot { width: 10px; height: 10px; border-radius: 50%; background: #444; display: inline-block; }
+.bler-dot { width: 9px; height: 9px; border-radius: 50%; background: #3a3a3a; display: inline-block; }
 .bler-dot.bler-0 { background: #3ecf5c; }
 .bler-dot.bler-1 { background: #cca300; }
 .bler-dot.bler-2 { background: #cc7a00; }
 .bler-dot.bler-3 { background: #c41e3a; }
 
 /* ---------- Clock screen ---------- */
-.cr-clock-big-wrap { display: flex; justify-content: center; margin: 20px 0; }
+.cr-clock-big-wrap { display: flex; justify-content: center; margin: 16px 0; }
 
 .cr-clock-big {
-    width: 220px;
-    height: 220px;
+    width: 200px;
+    height: 200px;
     border-radius: 50%;
-    background: radial-gradient(circle at 35% 30%, var(--brass-light), var(--brass-dark) 85%);
+    background: radial-gradient(circle at 35% 30%, var(--brass-light), var(--brass-darker) 85%);
     box-shadow: 0 0 0 4px var(--wood-dark), inset 0 0 20px rgba(0,0,0,0.5);
     position: relative;
 }
 .cr-clock-big::before {
     content: '';
     position: absolute;
-    inset: 14px;
+    inset: 13px;
     border-radius: 50%;
-    background: var(--dial-cream);
-    box-shadow: inset 0 0 14px rgba(120, 80, 20, 0.4);
+    background:
+        radial-gradient(circle at 50% 100%, rgba(255, 220, 150, 0.35), transparent 60%),
+        var(--dial-cream);
+    box-shadow: inset 0 0 16px rgba(120, 80, 20, 0.45);
+}
+
+.cr-clock-big-face {
+    position: absolute;
+    inset: 13px;
+    border-radius: 50%;
+    overflow: hidden;
+}
+
+.cr-clock-tick {
+    position: absolute;
+    width: 2px;
+    height: 8px;
+    background: #4a2e0c;
+    opacity: 0.7;
+}
+.cr-clock-tick.major { width: 3px; height: 12px; opacity: 1; }
+
+.cr-clock-num {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: #4a2e0c;
+    font-variant-numeric: tabular-nums;
 }
 
 .cr-hand-big {
@@ -452,9 +734,9 @@ body {
     border-radius: 3px;
     z-index: 2;
 }
-.cr-hand-hour { width: 6px; height: 55px; margin-left: -3px; }
-.cr-hand-min { width: 4px; height: 80px; margin-left: -2px; }
-.cr-hand-sec { width: 2px; height: 88px; margin-left: -1px; background: var(--pointer-red); }
+.cr-hand-hour { width: 6px; height: 50px; margin-left: -3px; }
+.cr-hand-min { width: 4px; height: 74px; margin-left: -2px; }
+.cr-hand-sec { width: 2px; height: 80px; margin-left: -1px; background: var(--pointer-red); }
 
 .cr-clock-cap {
     position: absolute;
@@ -469,11 +751,11 @@ body {
 
 .cr-clock-digital {
     text-align: center;
-    font-size: 1.6rem;
+    font-size: 1.5rem;
     font-variant-numeric: tabular-nums;
     color: var(--brass-light);
 }
-.cr-clock-date { text-align: center; color: var(--fg-dim); margin-top: 4px; }
+.cr-clock-date { text-align: center; color: var(--fg-dim); margin-top: 4px; font-variant: small-caps; }
 .cr-clock-source { text-align: center; margin-top: 14px; font-size: 0.8rem; color: var(--fg-dim); }
 .cr-clock-source span { color: var(--brass-light); font-weight: 600; }
 
@@ -486,7 +768,7 @@ body {
     width: 100%;
     height: 6px;
     border-radius: 3px;
-    background: #1a1008;
+    background: #140d06;
     outline: none;
     -webkit-appearance: none;
     appearance: none;
@@ -495,7 +777,7 @@ body {
     -webkit-appearance: none;
     width: 20px; height: 20px;
     border-radius: 50%;
-    background: radial-gradient(circle at 35% 30%, var(--brass-light), var(--brass-dark));
+    background: radial-gradient(circle at 35% 30%, var(--brass-light), var(--brass-darker));
     cursor: pointer;
 }
 
@@ -503,47 +785,88 @@ body {
     width: 100%;
     padding: 10px;
     background: var(--bakelite);
-    border: 1px solid var(--brass-dark);
+    border: 1px solid var(--brass-darker);
     color: var(--fg);
-    border-radius: 6px;
+    border-radius: 5px;
 }
 
 .cr-wifi-status { margin-left: 10px; font-size: 0.8rem; color: var(--fg-dim); }
 .cr-settings-note { margin-top: 20px; font-size: 0.8rem; color: var(--fg-dim); }
 .cr-settings-note a { color: var(--brass-light); }
 
-/* ---------- Bottom navigation ---------- */
+/* ---------- Bottom navigation: mechanical button row, not a mobile tab bar */
 .cr-nav {
     position: absolute;
     bottom: 0; left: 0; right: 0;
     display: flex;
     background: linear-gradient(to bottom, var(--wood-mid), var(--wood-dark));
-    box-shadow: 0 -2px 0 var(--brass-dark), 0 -4px 12px rgba(0,0,0,0.5);
-    padding: 6px;
-    gap: 4px;
+    box-shadow: 0 -1px 0 var(--brass-darker), inset 0 2px 6px rgba(0,0,0,0.4);
+    padding: 8px 6px;
+    gap: 5px;
 }
 
 .cr-nav-btn {
     flex: 1;
-    background: none;
+    background: linear-gradient(to bottom, #4a3320, #241708);
     border: none;
     color: var(--fg-dim);
-    font-size: 0.72rem;
-    padding: 10px 2px;
-    border-radius: 8px;
+    font-size: 0.68rem;
+    font-variant: small-caps;
+    letter-spacing: 0.5px;
+    padding: 9px 2px 7px;
+    border-radius: 5px;
     cursor: pointer;
     font-family: inherit;
+    box-shadow: 0 2px 0 rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.08);
+    position: relative;
+}
+.cr-nav-btn::before {
+    content: '';
+    display: block;
+    width: 4px; height: 4px;
+    margin: 0 auto 4px;
+    border-radius: 50%;
+    background: #3a2e20;
+    box-shadow: inset 0 0 2px rgba(0,0,0,0.8);
 }
 .cr-nav-btn.active {
-    color: var(--bakelite);
-    background: linear-gradient(to bottom, var(--brass-light), var(--brass-dark));
-    font-weight: 700;
+    color: var(--brass-light);
+    transform: translateY(2px);
+    box-shadow: inset 0 2px 5px rgba(0,0,0,0.5);
+}
+.cr-nav-btn.active::before {
+    background: radial-gradient(circle at 35% 30%, #ffdd88, var(--dial-amber));
+    box-shadow: 0 0 4px 1px rgba(224, 164, 55, 0.9);
 }
 
 .hidden { display: none !important; }
 
 /* ---------- Small screens: keep the main radio view scroll-free ---------- */
 @media (max-width: 400px) {
-    .cr-knob { width: 66px; height: 66px; }
-    .cr-dial-scale { height: 50px; }
+    .cr-knob { width: 72px; height: 72px; }
+    .cr-dial-scale { height: 88px; }
+}
+
+/* ---------- Landscape phones: side-by-side layout so the main radio
+   screen needs no scrolling (issue #8 requirement + review point 14) --- */
+@media (orientation: landscape) and (max-height: 520px) {
+    .screen { padding-bottom: 70px; }
+    #screen-radio.screen.active { flex-direction: column; }
+    .cr-topbar { margin-bottom: 6px; }
+
+    .cr-radio-layout { flex-direction: row; gap: 14px; align-items: flex-start; }
+    .cr-radio-primary { flex: 1.3; }
+    .cr-radio-secondary { flex: 1; }
+
+    .cr-dial-window { margin-bottom: 6px; padding: 10px 10px 8px; }
+    .cr-dial-scale { height: 64px; }
+    .cr-dial-readout span { font-size: 1.4rem; }
+
+    .cr-controls { margin-bottom: 8px; }
+    .cr-knob { width: 60px; height: 60px; }
+    .cr-presets { gap: 5px; }
+    .cr-preset-btn { height: 42px; }
+
+    .cr-nav { padding: 4px 6px; }
+    .cr-nav-btn { font-size: 0.6rem; padding: 6px 2px 5px; }
 }
