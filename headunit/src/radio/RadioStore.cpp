@@ -4,6 +4,7 @@
 //
 
 #include <Arduino.h>
+#include "log/LogTail.h"
 #include <LittleFS.h>
 #include <ArduinoJson.h>
 #include "radio/RadioStore.h"
@@ -17,15 +18,15 @@ RadioStore::~RadioStore() {
 
 bool RadioStore::begin() {
     if (!LittleFS.begin()) {
-        Serial.println(F("[STORE] LittleFS mount failed, formatting..."));
+        LOG.println(F("[STORE] LittleFS mount failed, formatting..."));
         LittleFS.format();
         if (!LittleFS.begin()) {
-            Serial.println(F("[STORE] LittleFS format failed"));
+            LOG.println(F("[STORE] LittleFS format failed"));
             return false;
         }
     }
     _ensureDirs();
-    Serial.println(F("[STORE] Ready"));
+    LOG.println(F("[STORE] Ready"));
     return true;
 }
 
@@ -59,14 +60,14 @@ bool RadioStore::_writeFile(const char* path, const String& content) {
 bool RadioStore::loadConfig(RadioConfig& config) {
     String content = _readFile(CONFIG_FILE);
     if (content.isEmpty()) {
-        Serial.println(F("[STORE] No config file, using defaults"));
+        LOG.println(F("[STORE] No config file, using defaults"));
         return false;
     }
 
     JsonDocument doc;
     DeserializationError err = deserializeJson(doc, content);
     if (err) {
-        Serial.printf("[STORE] Config parse error: %s\n", err.c_str());
+        LOG.printf("[STORE] Config parse error: %s\n", err.c_str());
         return false;
     }
 
@@ -76,7 +77,7 @@ bool RadioStore::loadConfig(RadioConfig& config) {
     strlcpy(config.staSsid, doc["staSsid"] | "", sizeof(config.staSsid));
     strlcpy(config.staPassword, doc["staPassword"] | "", sizeof(config.staPassword));
 
-    Serial.println(F("[STORE] Config loaded"));
+    LOG.println(F("[STORE] Config loaded"));
     return true;
 }
 
@@ -91,7 +92,7 @@ bool RadioStore::saveConfig(const RadioConfig& config) {
     String json;
     serializeJson(doc, json);
     bool ok = _writeFile(CONFIG_FILE, json);
-    if (ok) Serial.println(F("[STORE] Config saved"));
+    if (ok) LOG.println(F("[STORE] Config saved"));
     return ok;
 }
 
@@ -105,7 +106,7 @@ bool RadioStore::loadStations(RadioStation* stations, size_t maxStations, size_t
     JsonDocument doc;
     DeserializationError err = deserializeJson(doc, content);
     if (err) {
-        Serial.printf("[STORE] Stations parse error: %s\n", err.c_str());
+        LOG.printf("[STORE] Stations parse error: %s\n", err.c_str());
         count = 0;
         return false;
     }
@@ -124,7 +125,7 @@ bool RadioStore::loadStations(RadioStation* stations, size_t maxStations, size_t
         count++;
     }
 
-    Serial.printf("[STORE] Loaded %d stations\n", count);
+    LOG.printf("[STORE] Loaded %d stations\n", count);
     return true;
 }
 
@@ -145,7 +146,7 @@ bool RadioStore::saveStations(const RadioStation* stations, size_t count) {
     String json;
     serializeJson(doc, json);
     bool ok = _writeFile(STATIONS_FILE, json);
-    if (ok) Serial.printf("[STORE] Saved %d stations\n", count);
+    if (ok) LOG.printf("[STORE] Saved %d stations\n", count);
     return ok;
 }
 

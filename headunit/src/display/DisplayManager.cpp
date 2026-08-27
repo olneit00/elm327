@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include "log/LogTail.h"
 #include <lvgl.h>
 
 #include "display/DisplayDevice.hpp"
@@ -28,7 +29,7 @@ void FlushCb(lv_display_t* disp, const lv_area_t* area, uint8_t* px_map) {
 
   static uint32_t s_flushes = 0;
   if (s_flushes < 8 || (s_flushes % 500) == 0) {
-    Serial.printf("[FLUSH] #%lu (%d,%d)-(%d,%d) %ux%u\n",
+    LOG.printf("[FLUSH] #%lu (%d,%d)-(%d,%d) %ux%u\n",
                   s_flushes, area->x1, area->y1, area->x2, area->y2, w, h);
   }
   ++s_flushes;
@@ -49,7 +50,7 @@ DisplayManager::Lock::Lock() : _acquired(false) {
     _acquired = xSemaphoreTakeRecursive(DisplayManager::_lvglMutex,
                                          pdMS_TO_TICKS(kLvglLockTimeoutMs)) == pdTRUE;
     if (!_acquired) {
-      Serial.println(F("[DISPLAY] LVGL lock timed out - skipping this LVGL access"));
+      LOG.println(F("[DISPLAY] LVGL lock timed out - skipping this LVGL access"));
     }
   }
 }
@@ -66,13 +67,13 @@ bool DisplayManager::begin(unsigned int width, unsigned int height) {
   // lock can safely call another that also takes one.
   _lvglMutex = xSemaphoreCreateRecursiveMutex();
   if (_lvglMutex == nullptr) {
-    Serial.println(F("[DISPLAY] Failed to create LVGL mutex"));
+    LOG.println(F("[DISPLAY] Failed to create LVGL mutex"));
     return false;
   }
 
-  Serial.println(F("[DISPLAY] init LCD..."));
+  LOG.println(F("[DISPLAY] init LCD..."));
   if (!lcd.init()) {
-    Serial.println(F("[DISPLAY] lcd.init() FAILED"));
+    LOG.println(F("[DISPLAY] lcd.init() FAILED"));
     return false;
   }
   lcd.setColorDepth(16);
@@ -81,7 +82,7 @@ bool DisplayManager::begin(unsigned int width, unsigned int height) {
   // expects native-endian uint16 buffers only when swapBytes is enabled.
   // Without this every pixel is byte-swapped on the panel (beige -> slate blue).
   lcd.setSwapBytes(true);
-  Serial.println(F("[DISPLAY] LCD ready"));
+  LOG.println(F("[DISPLAY] LCD ready"));
 
 #ifdef HEADUNIT_TEST_MODE
   // Direct fillScreen test (known to work) - bring-up diagnostics only.
@@ -91,7 +92,7 @@ bool DisplayManager::begin(unsigned int width, unsigned int height) {
   // it behind TEST_MODE (like the LVGL color test further below already
   // was) keeps that signal meaningful in production.
   lcd.fillScreen(0xF800); // red
-  Serial.println(F("[DISPLAY] fillScreen red"));
+  LOG.println(F("[DISPLAY] fillScreen red"));
   delay(300);
 
   // Direct pushImage test (non-DMA) - does THIS work?
@@ -100,7 +101,7 @@ bool DisplayManager::begin(unsigned int width, unsigned int height) {
   lcd.startWrite();
   lcd.pushImage(0, 0, 60, 1, greenBuf);
   lcd.endWrite();
-  Serial.println(F("[DISPLAY] pushImage green strip (top)"));
+  LOG.println(F("[DISPLAY] pushImage green strip (top)"));
   delay(500);
 
   // Full red via pushImage
@@ -111,7 +112,7 @@ bool DisplayManager::begin(unsigned int width, unsigned int height) {
     lcd.pushImage(0, y, 240, 1, redBuf);
   }
   lcd.endWrite();
-  Serial.println(F("[DISPLAY] pushImage full red"));
+  LOG.println(F("[DISPLAY] pushImage full red"));
   delay(500);
 #endif
 
@@ -125,11 +126,11 @@ bool DisplayManager::begin(unsigned int width, unsigned int height) {
   lv_display_set_buffers(display, renderBuffer, nullptr, sizeof(renderBuffer),
                          LV_DISPLAY_RENDER_MODE_PARTIAL);
 
-  Serial.printf("[DISPLAY] LVGL display=%p\n", (void*)display);
+  LOG.printf("[DISPLAY] LVGL display=%p\n", (void*)display);
 
 #ifdef HEADUNIT_TEST_MODE
   // LVGL color test - test mode only
-  Serial.println(F("[DISPLAY] LVGL color test"));
+  LOG.println(F("[DISPLAY] LVGL color test"));
   lv_obj_set_style_bg_color(lv_screen_active(), lv_color_hex(0xFF0000), 0);
   lv_timer_handler();
   delay(500);
@@ -140,11 +141,11 @@ bool DisplayManager::begin(unsigned int width, unsigned int height) {
   lv_timer_handler();
   delay(500);
 
-  Serial.println(F("[DISPLAY] LVGL color test done"));
+  LOG.println(F("[DISPLAY] LVGL color test done"));
 #endif
   lv_obj_set_style_bg_color(lv_screen_active(), lv_color_hex(0x000000), 0);
   lv_timer_handler();
-  Serial.println(F("[DISPLAY] ready"));
+  LOG.println(F("[DISPLAY] ready"));
   return true;
 }
 

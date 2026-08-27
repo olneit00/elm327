@@ -4,6 +4,7 @@
 //
 
 #include <Arduino.h>
+#include "log/LogTail.h"
 #include <WiFi.h>
 #include "net/WifiManager.h"
 #include "radio/RadioTypes.h"
@@ -24,11 +25,11 @@ bool WifiManager::begin(const char* apSsid, const char* apPassword) {
 
     _startAP();
 
-    Serial.println(F("[WIFI] AP + STA mode started"));
-    Serial.print(F("[WIFI] AP SSID: "));
-    Serial.println(_apSsid);
-    Serial.print(F("[WIFI] AP IP: "));
-    Serial.println(WiFi.softAPIP());
+    LOG.println(F("[WIFI] AP + STA mode started"));
+    LOG.print(F("[WIFI] AP SSID: "));
+    LOG.println(_apSsid);
+    LOG.print(F("[WIFI] AP IP: "));
+    LOG.println(WiFi.softAPIP());
 
     return true;
 }
@@ -53,8 +54,8 @@ void WifiManager::loop() {
 bool WifiManager::connectSta(const char* ssid, const char* password) {
     if (!ssid || strlen(ssid) == 0) return false;
 
-    Serial.print(F("[WIFI] Connecting to STA (async): "));
-    Serial.println(ssid);
+    LOG.print(F("[WIFI] Connecting to STA (async): "));
+    LOG.println(ssid);
 
     WiFi.begin(ssid, password ? password : "");
     _staConnectionState = StaConnectionState::Connecting;
@@ -70,8 +71,8 @@ void WifiManager::_pollStaConnecting() {
     if (WiFi.status() == WL_CONNECTED) {
         _staConnected = true;
         _staConnectionState = StaConnectionState::Connected;
-        Serial.print(F("[WIFI] STA connected, IP: "));
-        Serial.println(WiFi.localIP());
+        LOG.print(F("[WIFI] STA connected, IP: "));
+        LOG.println(WiFi.localIP());
         if (_staConnectCallback) {
             _staConnectCallback(true, WiFi.localIP());
         }
@@ -80,7 +81,7 @@ void WifiManager::_pollStaConnecting() {
 
     if (millis() - _staConnectStartMs > STA_CONNECT_TIMEOUT_MS) {
         _staConnectionState = StaConnectionState::Failed;
-        Serial.println(F("[WIFI] STA connection timeout"));
+        LOG.println(F("[WIFI] STA connection timeout"));
         if (_staConnectCallback) {
             _staConnectCallback(false, IPAddress(0, 0, 0, 0));
         }
@@ -91,7 +92,7 @@ void WifiManager::disconnectSta() {
     WiFi.disconnect(true);
     _staConnected = false;
     _staConnectionState = StaConnectionState::Idle;
-    Serial.println(F("[WIFI] STA disconnected"));
+    LOG.println(F("[WIFI] STA disconnected"));
 }
 
 void WifiManager::setStaCredentials(const char* ssid, const char* password) {
@@ -111,7 +112,7 @@ void WifiManager::_checkStaConnection() {
     _lastStaCheckMs = millis();
 
     if (_staConnected && WiFi.status() != WL_CONNECTED) {
-        Serial.println(F("[WIFI] STA connection lost"));
+        LOG.println(F("[WIFI] STA connection lost"));
         _staConnected = false;
         if (_staConnectCallback) {
             _staConnectCallback(false, IPAddress(0,0,0,0));

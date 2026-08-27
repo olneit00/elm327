@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include "log/LogTail.h"
 #include <LittleFS.h>
 #include <ESPmDNS.h>
 
@@ -96,7 +97,7 @@ void onStationSelected(uint16_t frequency, const char* programService) {
 
 // WifiManager callback
 void onStaConnect(bool success, const IPAddress& ip) {
-    Serial.printf("[WIFI] STA callback: success=%d, ip=%s\n", success, ip.toString().c_str());
+    LOG.printf("[WIFI] STA callback: success=%d, ip=%s\n", success, ip.toString().c_str());
     if (success) {
         // mDNS only makes sense once we're actually on the home/existing
         // network (the isolated AP has no other clients to resolve names
@@ -106,32 +107,39 @@ void onStaConnect(bool success, const IPAddress& ip) {
         // easier debugging/access than being confined to the AP.
         if (MDNS.begin("opel-radio")) {
             MDNS.addService("http", "tcp", 80);
-            Serial.println(F("[WIFI] mDNS responder started: http://opel-radio.local"));
+            LOG.println(F("[WIFI] mDNS responder started: http://opel-radio.local"));
         } else {
-            Serial.println(F("[WIFI] mDNS responder failed to start"));
+            LOG.println(F("[WIFI] mDNS responder failed to start"));
         }
     }
 }
 
 }  // namespace
 
+// Global tee: all LOG.println/printf/print go to both the real Serial and
+// LogTail's ring buffer so the debug output can be tailed over the web
+// without a serial connection (see log/LogTail.h). Serial.begin() below is
+// called directly on the real Serial object. Defined at global scope (that's
+// where LogTail.h's `extern TeePrint LOG;` refers to).
+TeePrint LOG(Serial, LogTail::instance());
+
 void setup() {
   Serial.begin(115200);
   delay(300);
 
-  Serial.println();
-  Serial.println(F("Headunit GC9A01 analog (LVGL + LovyanGFX) + Si4703 Radio"));
+  LOG.println();
+  LOG.println(F("Headunit GC9A01 analog (LVGL + LovyanGFX) + Si4703 Radio"));
 
   // Initialize LittleFS and RadioStore
   if (!radioStore.begin()) {
-    Serial.println(F("[STORE] Failed to initialize"));
+    LOG.println(F("[STORE] Failed to initialize"));
   }
 
   // Load persisted config
   RadioConfig config;
   if (radioStore.loadConfig(config)) {
     radioService.applyConfig(config);
-    Serial.printf("[STORE] Restored: freq=%.2f MHz, vol=%d%%, muted=%s\n",
+    LOG.printf("[STORE] Restored: freq=%.2f MHz, vol=%d%%, muted=%s\n",
                   config.lastFrequency / 100.0f,
                   volumeHardwareToPercent(config.lastVolume),
                   config.lastMuted ? "yes" : "no");
@@ -143,17 +151,17 @@ void setup() {
     size_t count = 0;
     if (radioStore.loadStations(stations, 50, count) && count > 0) {
       radioService.setStations(stations, count);
-      Serial.printf("[STORE] Restored %u stations from disk\n", count);
+      LOG.printf("[STORE] Restored %u stations from disk\n", count);
     } else {
-      Serial.println(F("[STORE] No persisted stations found"));
+      LOG.println(F("[STORE] No persisted stations found"));
     }
   }
 
   if (!DisplayManager::begin(pins::SCREEN_WIDTH, pins::SCREEN_HEIGHT)) {
-    Serial.println(F("[DISPLAY] init failed"));
+    LOG.println(F("[DISPLAY] init failed"));
     while (true) {}
   }
-  Serial.println(F("[DISPLAY] ready"));
+  LOG.println(F("[DISPLAY] ready"));
 
   // Build the face and hands in every mode so update() always has targets.
   clockScreen.attachTimeSource(&timeSource);
@@ -161,17 +169,17 @@ void setup() {
 
   // Create RadioScreen
   radioScreen.create();
-  Serial.println(F("[RADIO] Screen created"));
+  LOG.println(F("[RADIO] Screen created"));
 
   // Initialize Radio
-  Serial.println(F("[RADIO] Initializing Si4703..."));
+  LOG.println(F("[RADIO] Initializing Si4703..."));
   if (radioService.begin()) {
     radioInitialized = true;
-    Serial.println(F("[RADIO] Si4703 initialized successfully"));
+    LOG.println(F("[RADIO] Si4703 initialized successfully"));
     
     // Power ON the radio
     radioService.powerOn();
-    Serial.println(F("[RADIO] Radio powered ON"));
+    LOG.println(F("[RADIO] Radio powered ON"));
     
     // Tune to last frequency (already set via applyConfig)
     radioService.setVolume(config.lastVolume);
@@ -179,7 +187,7 @@ void setup() {
       radioService.setMuted(true);
     }
   } else {
-    Serial.println(F("[RADIO] Si4703 initialization FAILED - check wiring"));
+    LOG.println(F("[RADIO] Si4703 initialization FAILED - check wiring"));
   }
 
   // Register RadioService callbacks
@@ -193,11 +201,11 @@ void setup() {
   // hands on real time between RDS updates.
   radioService.setTimeCallback([](uint8_t hour, uint8_t minute, uint8_t second) {
     timeSource.setSeed(TimeOfDay{hour, minute, second});
-    Serial.printf("[CLOCK] RDS time synced: %02u:%02u:%02u\n", hour, minute, second);
+    LOG.printf("[CLOCK] RDS time synced: %02u:%02u:%02u\n", hour, minute, second);
   });
 
   // Initialize WiFi + WebServer
-  Serial.println(F("[WEB] Starting WiFi AP + WebServer..."));
+  LOG.println(F("[WEB] Starting WiFi AP + WebServer..."));
   // WPA2 password: an empty one creates an open AP, letting anyone in range
   // control the radio/WiFi config or sniff the STA credentials transmitted
   // in POST /api/wifi/connect and /api/radio/config over it (WPA2 requires
@@ -205,7 +213,7 @@ void setup() {
   if (wifiManager.begin("Opel-Radio", "OpelRadio1935")) {
     if (webServer.begin(80)) {
       webInitialized = true;
-      Serial.println(F("[WEB] Server ready"));
+      LOG.println(F("[WEB] Server ready"));
     }
   }
   wifiManager.setStaConnectCallback(onStaConnect);
@@ -220,7 +228,7 @@ void setup() {
   // was already in place. connectSta() does not block - the connection
   // attempt and its timeout are polled from wifiManager.loop() below.
   if (strlen(config.staSsid) > 0) {
-    Serial.printf("[WIFI] Auto-connecting to saved network: %s\n", config.staSsid);
+    LOG.printf("[WIFI] Auto-connecting to saved network: %s\n", config.staSsid);
     wifiManager.connectSta(config.staSsid, config.staPassword);
   }
 
@@ -228,7 +236,7 @@ void setup() {
   clockScreen.setManualTime(kTest[0], true);
   lastStepMs_ = millis();
   stepIndex_ = 0;
-  Serial.println(F("[TEST] cycling through fixed hand stamps every 2 s"));
+  LOG.println(F("[TEST] cycling through fixed hand stamps every 2 s"));
 #endif
 }
 
@@ -246,7 +254,7 @@ void loop() {
     stepIndex_ = (stepIndex_ + 1) % (sizeof(kTest) / sizeof(kTest[0]));
     TimeOfDay t = kTest[stepIndex_];
     clockScreen.setManualTime(t, true);
-    Serial.printf("[TEST] hand stamp %d:%02d:%02d\n", t.hour, t.minute,
+    LOG.printf("[TEST] hand stamp %d:%02d:%02d\n", t.hour, t.minute,
                   t.second);
   }
   clockScreen.update();
@@ -265,7 +273,7 @@ void loop() {
     if (millis() - lastRadioTestMs > 10000) {
       lastRadioTestMs = millis();
       const RadioStatus& status = radioService.getStatus();
-      Serial.printf("[RADIO] Freq: %.2f MHz, RSSI: %d, Stereo: %s, PS: %s\n",
+      LOG.printf("[RADIO] Freq: %.2f MHz, RSSI: %d, Stereo: %s, PS: %s\n",
                     status.frequency / 100.0f,
                     status.rssi,
                     status.stereo ? "Yes" : "No",
@@ -273,10 +281,10 @@ void loop() {
 
       // Test sequence: seek up every 10 seconds
       if (radioTestStep % 2 == 0) {
-        Serial.println(F("[RADIO] Seek Up..."));
+        LOG.println(F("[RADIO] Seek Up..."));
         radioService.seekUp();
       } else {
-        Serial.println(F("[RADIO] Seek Down..."));
+        LOG.println(F("[RADIO] Seek Down..."));
         radioService.seekDown();
       }
       radioTestStep++;
@@ -334,11 +342,11 @@ void loop() {
     if (showRadioScreen) {
       clockScreen.setVisible(false);
       radioScreen.setVisible(true);
-      Serial.println(F("[SCREEN] Switched to RadioScreen"));
+      LOG.println(F("[SCREEN] Switched to RadioScreen"));
     } else {
       radioScreen.setVisible(false);
       clockScreen.setVisible(true);
-      Serial.println(F("[SCREEN] Switched to ClockScreen"));
+      LOG.println(F("[SCREEN] Switched to ClockScreen"));
     }
   }
 #endif
