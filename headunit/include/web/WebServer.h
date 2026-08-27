@@ -25,11 +25,17 @@ public:
     void broadcastStationList(const RadioStation* stations, size_t count);
     void broadcastScanProgress(uint8_t progress, uint8_t count, bool scanning);
 
+    // Live log tail over SSE (no serial required); publish from loop().
+    void pollLogTail();
+
 private:
     RadioService& _radioService;
     WifiManager& _wifiManager;
     AsyncWebServer* _server = nullptr;
     AsyncEventSource* _events = nullptr;
+    AsyncEventSource* _logEvents = nullptr;
+    uint64_t _logLastSeq = 0;   // SSE log publish cursor
+    uint32_t _logLastPollMs = 0;
 
     // REST endpoints
     void _setupRestEndpoints();

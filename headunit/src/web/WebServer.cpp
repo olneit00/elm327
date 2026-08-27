@@ -4,6 +4,7 @@
 //
 
 #include <Arduino.h>
+#include "log/LogTail.h"
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
 #include <ArduinoJson.h>
@@ -47,13 +48,21 @@ WebServer::~WebServer() {
 bool WebServer::begin(uint16_t port) {
     _server = new AsyncWebServer(port);
     if (!_server) {
-        Serial.println(F("[WEB] Failed to create AsyncWebServer"));
+        LOG.println(F("[WEB] Failed to create AsyncWebServer"));
         return false;
     }
 
     _events = new AsyncEventSource("/api/radio/events");
     if (!_events) {
-        Serial.println(F("[WEB] Failed to create AsyncEventSource"));
+        LOG.println(F("[WEB] Failed to create AsyncEventSource"));
+        return false;
+    }
+
+    // Log tail SSE source (see _setupLogTail / pollLogTail). Registered in
+    // _setupSSE so it lives/dies with the server.
+    _logEvents = new AsyncEventSource("/api/log/events");
+    if (!_logEvents) {
+        LOG.println(F("[WEB] Failed to create LogEventSource"));
         return false;
     }
 
@@ -69,15 +78,17 @@ bool WebServer::begin(uint16_t port) {
     _server->addMiddleware(&loggingMiddleware);
 
     _server->begin();
-    Serial.printf("[WEB] Server started on port %d\n", port);
-    Serial.println(F("[WEB] SSE endpoint: /api/radio/events"));
+    LOG.printf("[WEB] Server started on port %d\n", port);
+    LOG.println(F("[WEB] SSE endpoint: /api/radio/events"));
 
     return true;
 }
 
 void WebServer::loop() {
-    // AsyncWebServer doesn't need loop()
-    // This is kept for interface consistency
+    // AsyncWebServer doesn't need loop(), but the log-tail SSE publisher
+    // polls LogTail here so new debug lines reach web subscribers without a
+    // serial connection.
+    pollLogTail();
 }
 
 void WebServer::_sendJson(AsyncWebServerRequest* request, int code, const char* body) {
@@ -142,6 +153,56 @@ void WebServer::_setupRestEndpoints() {
         String json = _statusToJson(_radioService.getStatus());
         AsyncWebServerResponse* response = request->beginResponse(200, "application/json", json);
         _addCorsHeaders(response);
+        request->send(response);
+    });
+
+    // GET /api/log - last captured debug lines as plain text (web tail without serial).
+    // Returns newline-separated LOG output, CJK/Latin-1 safe (JSON-escaped).
+    _server->on("/api/log", HTTP_GET, [](AsyncWebServerRequest* request) {
+        char buf[8192];
+        size_t n = LogTail::instance().dump(buf, sizeof(buf));
+        // JSON-encode so the browser can display control chars / quotes safely.
+        String json = "\"";
+        for (size_t i = 0; i < n; i++) {
+            char c = buf[i];
+            if (c == '"') json += "\\\"";
+            else if (c == '\\') json += "\\\\";
+            else if (c == '\n') json += "\\n";
+            else if (c == '\r') { /* skip */ }
+            else if ((unsigned char)c < 0x20) json += '?';
+            else json += c;
+        }
+        json += "\"";
+        AsyncWebServerResponse* response = request->beginResponse(200, "application/json", json);
+        request->send(response);
+    });
+
+    // GET /log - self-contained web log tail page (no serial, no LittleFS
+    // upload needed). Opens an EventSource on /api/log/events and live-appends
+    // every debug line the device prints.
+    _server->on("/log", HTTP_GET, [](AsyncWebServerRequest* request) {
+        const char* html =
+            "<!DOCTYPE html><html lang=\"de\"><head><meta charset=\"utf-8\">"
+            "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+            "<title>OBD · Log</title>"
+            "<style>body{font-family:ui-monospace,Consolas,monospace;background:#0d1117;color:#c9d1d9;margin:0;}"
+            "header{padding:10px 14px;background:#161b22;border-bottom:1px solid #30363d;"
+            "font-weight:bold;position:sticky;top:0;display:flex;gap:10px;align-items:center;}"
+            "header span{font-size:12px;color:#8b949e;font-weight:normal;}"
+            "button{background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:4px 10px;cursor:pointer;}"
+            "pre{white-space:pre-wrap;word-break:break-all;padding:10px 14px;margin:0;font-size:12.5px;line-height:1.5;}"
+            ".rsttxt::before{color:#3fb950}pre span{white-space:pre-wrap}</style>"
+            "</head><body>"
+            "<header>📋 Live-Log <span>tail -f · ohne serielle Verbindung</span> "
+            "<span id=dim style=margin-left:auto;color:#56d364>● verbunden</span></header>"
+            "<pre id=log></pre>"
+            "<script>"
+            "const pre=document.getElementById('log');"
+            "const es=new EventSource('/api/log/events');"
+            "es.addEventListener('log',e=>{pre.textContent+=e.data;if(pre.textContent.length>60000)pre.textContent=pre.textContent.slice(-40000);window.scrollTo(0,document.body.scrollHeight);});"
+            "es.onerror=()=>document.getElementById('dim').textContent='getrennt · Verbinde neu …';"
+            "</script></body></html>";
+        AsyncWebServerResponse* response = request->beginResponse(200, "text/html", html);
         request->send(response);
     });
 
@@ -383,13 +444,41 @@ void WebServer::_setupRestEndpoints() {
 
 void WebServer::_setupSSE() {
     _events->onConnect([this](AsyncEventSourceClient* client) {
-        Serial.println(F("[WEB] SSE client connected"));
+        LOG.println(F("[WEB] SSE client connected"));
         // Send initial status
         String json = _statusToJson(_radioService.getStatus());
         client->send(json.c_str(), "status");
     });
 
     _server->addHandler(_events);
+
+    // Log-tail SSE source: on connect, hand the subscriber the whole current
+    // buffer so they start with history, then pollLogTail() pushes new lines.
+    _logEvents->onConnect([this](AsyncEventSourceClient* client) {
+        LOG.println(F("[WEB] Log SSE client connected"));
+        char buf[8192];
+        LogTail::instance().dump(buf, sizeof(buf));
+        // The whole history as one SSE message (multi-line -> multiple data: lines).
+        client->send(buf, "log", millis());
+        _logLastSeq = LogTail::instance().lastSeq();
+    });
+    _server->addHandler(_logEvents);
+}
+
+void WebServer::pollLogTail() {
+    // Push any new LOG lines to /api/log/events subscribers.
+    if (!_logEvents || _logEvents->count() == 0) return;
+    uint32_t now = millis();
+    if (now - _logLastPollMs < 250) return;   // ~4 Hz is plenty for a log tail
+    _logLastPollMs = now;
+
+    uint64_t maxSeq = _logLastSeq;
+    char buf[2048];
+    size_t n = LogTail::instance().dumpAfter(_logLastSeq, &maxSeq, buf, sizeof(buf));
+    if (n > 0) {
+        _logEvents->send(buf, "log", millis());
+        _logLastSeq = maxSeq;
+    }
 }
 
 void WebServer::_setupStaticFiles() {

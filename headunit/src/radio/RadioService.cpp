@@ -4,6 +4,7 @@
 //
 
 #include <Arduino.h>
+#include "log/LogTail.h"
 #include <Wire.h>
 #include "radio/RadioService.h"
 #include "hardware/Pins.h"
@@ -63,7 +64,7 @@ RadioService::RadioService() {
      // Create the mutex for thread-safe access
      _mutex = xSemaphoreCreateMutex();
      if (!_mutex) {
-         Serial.println(F("[RADIO] Mutex creation failed"));
+         LOG.println(F("[RADIO] Mutex creation failed"));
          return false;
      }
 
@@ -71,13 +72,13 @@ RadioService::RadioService() {
      Wire.setClock(400000);
 
     if (!_initHardware()) {
-        Serial.println(F("[RADIO] Hardware init failed"));
+        LOG.println(F("[RADIO] Hardware init failed"));
         return false;
     }
 
     _state = RadioState::Idle;
     _notifyStatus();
-    Serial.println(F("[RADIO] Ready"));
+    LOG.println(F("[RADIO] Ready"));
     return true;
 }
 
@@ -98,7 +99,7 @@ bool RadioService::_initHardware() {
     _si470x.getStatus();
     uint8_t partNumber = _si470x.getPartNumber();
     if (partNumber != 0x03 && partNumber != 0x01) {  // 3=Si4703, 1=Si4702
-        Serial.printf("[RADIO] Unexpected part number: 0x%02X\n", partNumber);
+        LOG.printf("[RADIO] Unexpected part number: 0x%02X\n", partNumber);
         // Continue anyway
     }
 
@@ -187,7 +188,7 @@ void RadioService::loop() {
             _stepSeeking();
             break;
         case RadioState::Scanning:
-            Serial.printf("[RADIO::LOOP] Scanning state detected, calling _stepScanning\n");
+            LOG.printf("[RADIO::LOOP] Scanning state detected, calling _stepScanning\n");
             _stepScanning();
             break;
     }
@@ -210,7 +211,7 @@ void RadioService::_stepTuning() {
     }
 
     if (millis() - _lastTuneMs > TUNE_TIMEOUT_MS) {
-        Serial.println(F("[RADIO] Tune timeout"));
+        LOG.println(F("[RADIO] Tune timeout"));
         _state = RadioState::Idle;
         _notifyStatus();
     } else {
@@ -268,7 +269,7 @@ void RadioService::_stepSeeking() {
         // Safety net: a full-band wrap seek shouldn't take this long; abort
         // so the CLI never hangs in the Seeking state.
         if (millis() - _lastTuneMs > 10000) {
-            Serial.println(F("[RADIO::SEEK] Seek timed out, no station found"));
+            LOG.println(F("[RADIO::SEEK] Seek timed out, no station found"));
             uint16_t r02 = _si470x.getShadownRegister(0x02);
             _si470x.setShadownRegister(0x02, r02 & ~0x0100u);  // SEEK = 0
             uint16_t r03 = _si470x.getShadownRegister(0x03);
@@ -291,12 +292,12 @@ void RadioService::_stepSeeking() {
     _si470x.setAllRegisters();
 
     if (seekFail) {
-        Serial.println(F("[RADIO::SEEK] Seek hit band limit, no station found"));
+        LOG.println(F("[RADIO::SEEK] Seek hit band limit, no station found"));
     } else {
         _si470x.getAllRegisters();
         uint16_t foundFreq = _si470x.getRealFrequency();
         _si470x.setFrequency(foundFreq);  // sync cached frequency
-        Serial.printf("[RADIO::SEEK] Tuned to %.2f MHz\n", foundFreq / 100.0f);
+        LOG.printf("[RADIO::SEEK] Tuned to %.2f MHz\n", foundFreq / 100.0f);
     }
 
     // The station just found by seek hasn't had its RDS text decoded yet -
@@ -317,29 +318,29 @@ void RadioService::_stepSeeking() {
 }
 
 void RadioService::_stepScanning() {
-    Serial.printf("[RADIO::SCAN] _stepScanning called, phase=%d\n", (int)_scan.phase);
+    LOG.printf("[RADIO::SCAN] _stepScanning called, phase=%d\n", (int)_scan.phase);
     _stepScan();
 }
 
 void RadioService::_stepScan() {
     switch (_scan.phase) {
         case ScanState::Idle:
-            Serial.println(F("[RADIO::SCAN] Phase: Idle -> SeekStart"));
+            LOG.println(F("[RADIO::SCAN] Phase: Idle -> SeekStart"));
             _scan.phase = ScanState::SeekStart;
             _scan.currentFreq = app_config::kMinFrequency10kHz;
             _scan.stationCount = 0;
             _scan.lastSeekMs = millis();
-            Serial.printf("[RADIO::SCAN]   Starting from freq=%u kHz\n", _scan.currentFreq);
+            LOG.printf("[RADIO::SCAN]   Starting from freq=%u kHz\n", _scan.currentFreq);
             break;
 
         case ScanState::SeekStart:
-            Serial.printf("[RADIO::SCAN] Phase: SeekStart at freq=%u kHz\n", _scan.currentFreq);
+            LOG.printf("[RADIO::SCAN] Phase: SeekStart at freq=%u kHz\n", _scan.currentFreq);
             if (_scanSeekStart()) {
-                Serial.println(F("[RADIO::SCAN]   -> SeekWait"));
+                LOG.println(F("[RADIO::SCAN]   -> SeekWait"));
                 _scan.phase = ScanState::SeekWait;
                 _scan.lastSeekMs = millis();
             } else {
-                Serial.println(F("[RADIO::SCAN]   _scanSeekStart() returned false!"));
+                LOG.println(F("[RADIO::SCAN]   _scanSeekStart() returned false!"));
             }
             break;
 
@@ -347,14 +348,14 @@ void RadioService::_stepScan() {
             const int seekResult = _scanSeekWait();
             // 0 = still running, 1 = station found, 2 = seek fail (no more stations)
             if (seekResult == 1) {
-                Serial.printf("[RADIO::SCAN] Phase: SeekWait - FOUND station, settling...\n");
+                LOG.printf("[RADIO::SCAN] Phase: SeekWait - FOUND station, settling...\n");
                 _scan.phase = ScanState::Settle;
                 _scan.settleStartMs = millis();
             } else if (seekResult == 2) {
-                Serial.printf("[RADIO::SCAN] Phase: SeekWait - seek fail, scan complete (%u found)\n", _scan.stationCount);
+                LOG.printf("[RADIO::SCAN] Phase: SeekWait - seek fail, scan complete (%u found)\n", _scan.stationCount);
                 _scan.phase = ScanState::Complete;
             } else if (millis() - _scan.lastSeekMs > 12000) {
-                Serial.printf("[RADIO::SCAN] Phase: SeekWait - TIMEOUT after %lu ms, moving to NextSeek\n", 
+                LOG.printf("[RADIO::SCAN] Phase: SeekWait - TIMEOUT after %lu ms, moving to NextSeek\n", 
                     millis() - _scan.lastSeekMs);
                 _scan.phase = ScanState::NextSeek;
             }
@@ -376,23 +377,23 @@ void RadioService::_stepScan() {
             break;
 
         case ScanState::StoreStation:
-            Serial.println(F("[RADIO::SCAN] Phase: StoreStation"));
+            LOG.println(F("[RADIO::SCAN] Phase: StoreStation"));
             if (_scanStoreStation()) {
-                Serial.printf("[RADIO::SCAN]   Stored station #%u, moving to NextSeek\n", _scan.stationCount);
+                LOG.printf("[RADIO::SCAN]   Stored station #%u, moving to NextSeek\n", _scan.stationCount);
                 _scan.phase = ScanState::NextSeek;
             } else {
-                Serial.println(F("[RADIO::SCAN]   _scanStoreStation() failed or duplicate, moving to NextSeek anyway"));
+                LOG.println(F("[RADIO::SCAN]   _scanStoreStation() failed or duplicate, moving to NextSeek anyway"));
                 _scan.phase = ScanState::NextSeek;
             }
             break;
 
         case ScanState::NextSeek:
-            Serial.printf("[RADIO::SCAN] Phase: NextSeek (current freq=%u)\n", _scan.currentFreq);
+            LOG.printf("[RADIO::SCAN] Phase: NextSeek (current freq=%u)\n", _scan.currentFreq);
             _scanNextSeek();
             break;
 
         case ScanState::Complete:
-            Serial.printf("[RADIO::SCAN] Phase: Complete - found %u stations\n", _scan.stationCount);
+            LOG.printf("[RADIO::SCAN] Phase: Complete - found %u stations\n", _scan.stationCount);
             _scanComplete();
             break;
     }
@@ -480,17 +481,17 @@ bool RadioService::seekDown() {
 }
 
 bool RadioService::startScan() {
-    Serial.printf("[RADIO::SCAN] startScan() called, current state: %d\n", (int)_state);
+    LOG.printf("[RADIO::SCAN] startScan() called, current state: %d\n", (int)_state);
     if (_state == RadioState::Scanning) {
-        Serial.println(F("[RADIO::SCAN] ERROR: Scan already in progress, rejecting start request"));
+        LOG.println(F("[RADIO::SCAN] ERROR: Scan already in progress, rejecting start request"));
         return false;
     }
-    Serial.println(F("[RADIO::SCAN] Starting new scan..."));
+    LOG.println(F("[RADIO::SCAN] Starting new scan..."));
     _state = RadioState::Scanning;
     _scan.phase = ScanState::Idle;
     _scan.currentFreq = app_config::kMinFrequency10kHz;
     _scan.stationCount = 0;
-    Serial.printf("[RADIO::SCAN] State changed to Scanning, phase=Idle, freq=%u\n", _scan.currentFreq);
+    LOG.printf("[RADIO::SCAN] State changed to Scanning, phase=Idle, freq=%u\n", _scan.currentFreq);
     _notifyScanProgress();
     return true;
 }
@@ -690,7 +691,7 @@ void RadioService::_pollRds() {
     static uint32_t lastRdsDiagMs = 0;
     if (millis() - lastRdsDiagMs > 5000) {
         lastRdsDiagMs = millis();
-        Serial.printf("[RDS::DIAG] ready=%s synced=%s rssi=%u stereo=%s freq=%.2f MHz\n",
+        LOG.printf("[RDS::DIAG] ready=%s synced=%s rssi=%u stereo=%s freq=%.2f MHz\n",
                       rdsReady ? "yes" : "no", rdsSynced ? "yes" : "no", _status.rssi,
                       _status.stereo ? "yes" : "no", _status.frequency / 100.0f);
     }
@@ -711,7 +712,7 @@ void RadioService::_pollRds() {
                 strncpy(_status.programService, ps, 8);
                 _status.programService[8] = '\0';
                 changed = true;
-                Serial.printf("[RDS::PS] decoded station name: \"%s\"\n", _status.programService);
+                LOG.printf("[RDS::PS] decoded station name: \"%s\"\n", _status.programService);
             }
 
             // RadioText (RT) - song info etc. from RDS 2A
@@ -720,12 +721,12 @@ void RadioService::_pollRds() {
                 strncpy(_status.radioText, rt, 64);
                 _status.radioText[64] = '\0';
                 changed = true;
-                Serial.printf("[RDS::DEBUG] radio text decoded: \"%.48s\"\n", _status.radioText);
+                LOG.printf("[RDS::DEBUG] radio text decoded: \"%.48s\"\n", _status.radioText);
             }
 
             if (changed) _status.lastRdsUpdateMs = millis();
 
-            Serial.printf("[RDS::DEBUG] ready=true state=%d freq=%.2fMHz PS=\"%.8s\" RT=\"%.16s\"\n",
+            LOG.printf("[RDS::DEBUG] ready=true state=%d freq=%.2fMHz PS=\"%.8s\" RT=\"%.16s\"\n",
                           (int)_state, _status.frequency / 100.0f,
                           _status.programService, _status.radioText);
         }
@@ -752,7 +753,7 @@ void RadioService::_pollRds() {
             if (_timeCallback) {
                 _timeCallback(localHour, localMinute, 0);
             }
-            Serial.printf("[RDS::TIME] CT=%s -> local %02u:%02u\n",
+            LOG.printf("[RDS::TIME] CT=%s -> local %02u:%02u\n",
                           rdsTime, localHour, localMinute);
         }
     } else {
@@ -775,7 +776,7 @@ void RadioService::_pollRds() {
             // earlier version of this line used bit0/bit4 based on a
             // seek-path fix that turned out to be testing RSSI bits by
             // coincidence, not the actual status bits - now corrected.
-            Serial.printf("[RDS::DEBUG] no RDS (state=%d freq=%.2fMHz RSSI=%u) reg0A=0x%04X (RDSR=%u RDSS=%u) 0D=0x%04X 0F=0x%04X\n",
+            LOG.printf("[RDS::DEBUG] no RDS (state=%d freq=%.2fMHz RSSI=%u) reg0A=0x%04X (RDSR=%u RDSS=%u) 0D=0x%04X 0F=0x%04X\n",
                           (int)_state, _status.frequency / 100.0f, _status.rssi,
                           reg0a, (reg0a >> 15) & 0x01, (reg0a >> 11) & 0x01,
                           reg0d, reg0f);
@@ -786,7 +787,7 @@ void RadioService::_pollRds() {
 bool RadioService::_scanSeekStart() {
     // Start seek from current scan frequency. currentFreq is already in the
     // same 10 kHz-step units setFrequency() expects (see _initHardware()).
-    Serial.printf("[RADIO::SCAN::SEEK] Starting seek at %.2f MHz\n", _scan.currentFreq / 100.0f);
+    LOG.printf("[RADIO::SCAN::SEEK] Starting seek at %.2f MHz\n", _scan.currentFreq / 100.0f);
     _si470x.setFrequency(_scan.currentFreq);
     delay(10);
 
@@ -806,7 +807,7 @@ bool RadioService::_scanSeekStart() {
     uint16_t r03 = _si470x.getShadownRegister(0x03);
     _si470x.setShadownRegister(0x03, r03 | 0x8000u);  // TUNE = 1
     _si470x.setAllRegisters();
-    Serial.println(F("[RADIO::SCAN::SEEK] Seek started (non-blocking)"));
+    LOG.println(F("[RADIO::SCAN::SEEK] Seek started (non-blocking)"));
     return true;
 }
 
@@ -833,7 +834,7 @@ int RadioService::_scanSeekWait() {
     _si470x.setAllRegisters();
 
     if (seekFail) {
-        Serial.printf("[RADIO::SCAN::SEEK] Seek failed (SF/BL): no more valid stations in band\n");
+        LOG.printf("[RADIO::SCAN::SEEK] Seek failed (SF/BL): no more valid stations in band\n");
         return 2;
     }
 
@@ -844,7 +845,7 @@ int RadioService::_scanSeekWait() {
     _si470x.setFrequency(freq);  // sync the library's cached frequency
     uint8_t rssi = _si470x.getRssi();
     bool stereo = _si470x.isStereo();
-    Serial.printf("[RADIO::SCAN::SEEK] FOUND: freq=%u (%.2f MHz), RSSI=%u, stereo=%s\n", 
+    LOG.printf("[RADIO::SCAN::SEEK] FOUND: freq=%u (%.2f MHz), RSSI=%u, stereo=%s\n", 
         freq, freq / 100.0f, rssi, stereo ? "yes" : "no");
     return 1;
 }
@@ -861,7 +862,7 @@ bool RadioService::_scanStoreStation() {
     uint8_t rssi = _si470x.getRssi();
     bool stereo = _si470x.isStereo();
 
-    Serial.printf("[RADIO::SCAN::STORE] getRealFrequency()=%u (%.2f MHz), RSSI=%u, stereo=%s\n", 
+    LOG.printf("[RADIO::SCAN::STORE] getRealFrequency()=%u (%.2f MHz), RSSI=%u, stereo=%s\n", 
         freq, freq / 100.0f, rssi, stereo ? "yes" : "no");
 
     // Jump the scan cursor past the found station so the next seek continues
@@ -873,7 +874,7 @@ bool RadioService::_scanStoreStation() {
     }
 
     if (!isValidFrequency(freq) || _isDuplicateFrequency(freq)) {
-        Serial.printf("[RADIO::SCAN::STORE] Rejected: invalid=%s (freq=%u, range=[8750-10800]), duplicate=%s\n",
+        LOG.printf("[RADIO::SCAN::STORE] Rejected: invalid=%s (freq=%u, range=[8750-10800]), duplicate=%s\n",
             !isValidFrequency(freq) ? "yes" : "no",
             freq,
             _isDuplicateFrequency(freq) ? "yes" : "no");
@@ -883,7 +884,7 @@ bool RadioService::_scanStoreStation() {
     // Skip weak/noise hits so the limited station buffer is not filled with
     // marginal channels and real stations at the top of the band make it in.
     if (rssi < app_config::kMinStationRssi) {
-        Serial.printf("[RADIO::SCAN::STORE] Skipped weak station %.2f MHz (RSSI=%u < %u)\n",
+        LOG.printf("[RADIO::SCAN::STORE] Skipped weak station %.2f MHz (RSSI=%u < %u)\n",
             freq / 100.0f, rssi, app_config::kMinStationRssi);
         return false;
     }
@@ -901,11 +902,11 @@ bool RadioService::_scanStoreStation() {
             MutexGuard guard(_mutex);
             if (guard.acquired()) _status.scanCount = _scan.stationCount;
         }
-        Serial.printf("[RADIO::SCAN::STORE] ✓ STORED station #%u at %.2f MHz\n", 
+        LOG.printf("[RADIO::SCAN::STORE] ✓ STORED station #%u at %.2f MHz\n", 
             _scan.stationCount, freq / 100.0f);
         _notifyStationList();
     } else {
-        Serial.println(F("[RADIO::SCAN::STORE] Buffer full (50 stations), ignoring"));
+        LOG.println(F("[RADIO::SCAN::STORE] Buffer full (50 stations), ignoring"));
     }
     return true;
 }
@@ -913,15 +914,15 @@ bool RadioService::_scanStoreStation() {
 void RadioService::_scanNextSeek() {
     _scan.currentFreq += 5;  // 50kHz = 5 * 10kHz steps
 
-    Serial.printf("[RADIO::SCAN::NEXSEEK] currentFreq now=%u, MAX_FREQ=%u, comparison: %u > %u = %s\n",
+    LOG.printf("[RADIO::SCAN::NEXSEEK] currentFreq now=%u, MAX_FREQ=%u, comparison: %u > %u = %s\n",
         _scan.currentFreq, app_config::kMaxFrequency10kHz, _scan.currentFreq, app_config::kMaxFrequency10kHz,
         (_scan.currentFreq > app_config::kMaxFrequency10kHz) ? "TRUE" : "FALSE");
 
     if (_scan.currentFreq > app_config::kMaxFrequency10kHz) {
-        Serial.printf("[RADIO::SCAN] Reached MAX_FREQ (%u), setting Complete phase\n", app_config::kMaxFrequency10kHz);
+        LOG.printf("[RADIO::SCAN] Reached MAX_FREQ (%u), setting Complete phase\n", app_config::kMaxFrequency10kHz);
         _scan.phase = ScanState::Complete;
     } else {
-        Serial.printf("[RADIO::SCAN] Moving to next seek frequency: %.2f MHz\n", _scan.currentFreq / 100.0f);
+        LOG.printf("[RADIO::SCAN] Moving to next seek frequency: %.2f MHz\n", _scan.currentFreq / 100.0f);
         _scan.phase = ScanState::SeekStart;
         _scan.lastSeekMs = millis();
     }
@@ -933,13 +934,13 @@ void RadioService::_scanNextSeek() {
         MutexGuard guard(_mutex);
         if (guard.acquired()) _status.scanProgress = scanProgress;
     }
-    Serial.printf("[RADIO::SCAN] Progress: %u%% (%u stations found)\n", 
+    LOG.printf("[RADIO::SCAN] Progress: %u%% (%u stations found)\n", 
         scanProgress, _scan.stationCount);
     _notifyScanProgress();
 }
 
 void RadioService::_scanComplete() {
-    Serial.printf("[RADIO::SCAN] _scanComplete() called, total stations: %u\n", _scan.stationCount);
+    LOG.printf("[RADIO::SCAN] _scanComplete() called, total stations: %u\n", _scan.stationCount);
     
     // Sort stations by frequency. Guard against stationCount == 0: since
     // stationCount is unsigned, "stationCount - 1" would otherwise wrap
@@ -954,14 +955,14 @@ void RadioService::_scanComplete() {
         }
     }
 
-    Serial.println(F("[RADIO::SCAN] Scan complete - stations sorted, resetting state to Idle"));
+    LOG.println(F("[RADIO::SCAN] Scan complete - stations sorted, resetting state to Idle"));
     _state = RadioState::Idle;
     _scan.phase = ScanState::Idle;
     {
         MutexGuard guard(_mutex);
         if (guard.acquired()) _status.scanProgress = 100;
     }
-    Serial.printf("[RADIO::SCAN] State reset: RadioState=%d, ScanState=%d\n", (int)_state, (int)_scan.phase);
+    LOG.printf("[RADIO::SCAN] State reset: RadioState=%d, ScanState=%d\n", (int)_state, (int)_scan.phase);
     _notifyScanProgress();
     _notifyStationList();
     _notifyStatus();
