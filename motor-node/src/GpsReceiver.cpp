@@ -1,4 +1,5 @@
 #include "GpsReceiver.h"
+#include "log/LogTail.h"
 #include <string.h>
 #include <stdlib.h>
 
@@ -58,7 +59,7 @@ void GpsReceiver::setSerial(uint8_t rxPin, uint8_t txPin, uint32_t baud) {
 
 void GpsReceiver::begin() {
   Serial2.begin(baud_, SERIAL_8N1, rxPin_, txPin_);
-  Serial.printf("[GPS] UART2 begin rx=%u tx=%u baud=%lu\n", rxPin_, txPin_, baud_);
+  LOG.printf("[GPS] UART2 begin rx=%u tx=%u baud=%lu\n", rxPin_, txPin_, baud_);
   configureModule();
 }
 
@@ -69,7 +70,7 @@ void GpsReceiver::configureModule() {
   // baud/GNSS change, so this can't leave the module worse off than before.
   for (const auto& m : kUbxEnableMsgs) {
     Serial2.write(m.bytes, m.len);
-    Serial.printf("[GPS] UBX CFG-MSG: enable %s on UART\n", m.name);
+    LOG.printf("[GPS] UBX CFG-MSG: enable %s on UART\n", m.name);
     delay(50);  // let the module ack/apply before the next command
   }
 }
@@ -80,13 +81,53 @@ GpsSnapshot GpsReceiver::snapshot() const {
     out = snap_;
     xSemaphoreGive(mutex_);
   }
+  out.bytesReceived = bytesReceived_;
+  out.lastByteMs = lastByteMs_;
   return out;
 }
 
 void GpsReceiver::update() {
   while (Serial2.available()) {
+    bytesReceived_ = bytesReceived_ + 1;
+    lastByteMs_ = millis();
     processByte((uint8_t)Serial2.read());
   }
+
+  // Periodic readable telemetry so we can tell from the serial log alone
+  // whether the GPS module is wired, powered, and locked.
+  uint32_t now = millis();
+  if (now - lastStatusMs_ >= 5000) {
+    lastStatusMs_ = now;
+    logStatus(snapshot());
+  }
+}
+
+void GpsReceiver::logStatus(const GpsSnapshot& s) {
+  uint32_t now = millis();
+  uint32_t age = (s.lastLineMs && s.lastLineMs <= now) ? (now - s.lastLineMs) / 1000 : 0xFFFFFFFF;
+
+  LOG.printf("[GPS] bytes=%lu lines=%lu parsed=%lu csumErr=%lu",
+                (unsigned long)s.bytesReceived, (unsigned long)s.linesReceived,
+                (unsigned long)s.sentencesParsed, (unsigned long)s.checksumErrors);
+
+  if (s.activeFix) {
+    LOG.printf(" | FIX %u/%u sats, lat=%.6f lon=%.6f, %.1f km/h krs=%.0f",
+                  s.satellitesInUse, s.satellitesInView, s.latitude, s.longitude,
+                  s.speedKmh, s.courseDeg);
+  } else {
+    LOG.printf(" | KEIN Fix (inView=%u qual=%u mode=%u)",
+                  s.satellitesInView, s.fixQuality, s.fixMode);
+  }
+
+  if (age == 0xFFFFFFFF) LOG.printf(" | letzterDatensatz=nie");
+  else LOG.printf(" | letzterDatensatz=%lus zurueck", (unsigned long)age);
+
+  if (s.bytesReceived == 0)
+    LOG.printf(" | WARNUNG: keine UART-Daten - GPS an GPIO16/17 (9600) angeschlossen?");
+  else if (s.lastLineMs == 0)
+    LOG.printf(" | rohe Bytes, aber noch kein kompletter NMEA-Satz gepart");
+
+  LOG.println();
 }
 
 void GpsReceiver::resetLine() {
@@ -210,7 +251,7 @@ void GpsReceiver::parseGsv(char** f, int n) {
   int msgNum = atoi(f[2]);
   snap_.satellitesInView = (uint8_t)atoi(f[3]);
   if (debugLogging_) {
-    Serial.printf("[GPS GSV] msgs=%d msg=%d inView=%d\n", totalMsgs, msgNum, snap_.satellitesInView);
+    LOG.printf("[GPS GSV] msgs=%d msg=%d inView=%d\n", totalMsgs, msgNum, snap_.satellitesInView);
   }
   for (int base = 4; base + 3 < n; base += 4) {
     if (f[base][0] == '\0') continue;
@@ -220,7 +261,7 @@ void GpsReceiver::parseGsv(char** f, int n) {
     int azimuth = atoi(f[base + 2]);
     int snr = atoi(f[base + 3]);
     if (debugLogging_) {
-      Serial.printf("[GPS GSV]   prn=%d elev=%d azim=%d snr=%d\n", prn, elevation, azimuth, snr);
+      LOG.printf("[GPS GSV]   prn=%d elev=%d azim=%d snr=%d\n", prn, elevation, azimuth, snr);
     }
     uint8_t slot = (uint8_t)(prn % kGpsMaxSatellites);
     snap_.satellites[slot].prn = (uint8_t)prn;
@@ -274,21 +315,26 @@ void GpsReceiver::processByte(uint8_t c) {
         uint8_t rx = (uint8_t)strtoul(star + 1, nullptr, 16);
         csumOk = (calc == rx);
       }
-      if (csumOk && line_[0] == '$') {
-        if (debugLogging_) {
-          Serial.print("[GPS RAW] ");
-          Serial.println(line_);
-        }
+if (line_[0] == '$') {
         if (mutex_ && xSemaphoreTake(mutex_, pdMS_TO_TICKS(50)) == pdTRUE) {
-          snap_.sentencesParsed++;
+          snap_.linesReceived++;
           snap_.lastLineMs = millis();
-          parseLine();
+          if (csumOk) {
+            if (debugLogging_) {
+              LOG.print(F("[GPS RAW] "));
+              LOG.println(line_);
+            }
+            snap_.sentencesParsed++;
+            parseLine();
+          } else {
+            if (debugLogging_) {
+              LOG.printf("[GPS ERR] checksum mismatch, line=\"%s\"\n", line_);
+            }
+            snap_.checksumErrors++;
+          }
           xSemaphoreGive(mutex_);
         }
-      } else {
-        if (debugLogging_) {
-          Serial.printf("[GPS ERR] checksum mismatch, line=\"%s\"\n", line_);
-        }
+      } else if (lineLen_ > 0) {
         if (mutex_ && xSemaphoreTake(mutex_, pdMS_TO_TICKS(50)) == pdTRUE) {
           snap_.checksumErrors++;
           xSemaphoreGive(mutex_);

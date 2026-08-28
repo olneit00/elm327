@@ -12,6 +12,7 @@
 #include <ESPAsyncWebServer.h>
 #include <ArduinoJson.h>
 #include "GpsReceiver.h"
+#include "log/LogTail.h"
 
 class GpsWebServer {
  public:
@@ -19,10 +20,15 @@ class GpsWebServer {
   ~GpsWebServer();
 
   void begin();
+  void loop();   // polls LogTail -> pushes new lines to /api/log/events SSE
 
  private:
   static String snapshotToJson(const GpsSnapshot& s);
+  void setupLogTail();
 
   GpsReceiver& gps_;
   AsyncWebServer server_;
+  AsyncEventSource* logEvents_ = nullptr;
+  uint64_t logLastSeq_ = 0;
+  uint32_t logLastPollMs_ = 0;
 };

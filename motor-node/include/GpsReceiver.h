@@ -68,6 +68,9 @@ struct GpsSnapshot {
   uint32_t lastLineMs = 0;     // millis() of last valid NMEA sentence parsed
   uint32_t sentencesParsed = 0; // monotonic counter
   uint32_t checksumErrors = 0;
+  uint32_t bytesReceived = 0;  // total raw bytes seen on UART2 (0 = GPS not wired)
+  uint32_t linesReceived = 0;  // total '$' NMEA lines received (any checksum state)
+  uint32_t lastByteMs = 0;     // millis() of last UART byte (data/activity watchdog)
 };
 
 class GpsReceiver {
@@ -104,8 +107,15 @@ class GpsReceiver {
   void parseGll(char** f, int n);
   void parseZda(char** f, int n);
 
+  void logStatus(const GpsSnapshot& s);  // periodic telemetry line on Serial
+
   uint8_t rxPin_, txPin_;
   uint32_t baud_;
+
+  // data/activity counters (write on loop task, read under mutex in snapshot)
+  volatile uint32_t bytesReceived_ = 0;
+  volatile uint32_t lastByteMs_ = 0;
+  uint32_t lastStatusMs_ = 0;
 
   // receive/parse line state (loop task only, no lock needed)
   char line_[128];

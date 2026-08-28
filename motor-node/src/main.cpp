@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include "log/LogTail.h"
 
 #include "Elm327Server.h"
 #include "GpsReceiver.h"
@@ -25,13 +26,19 @@ GpsReceiver gpsReceiver(kGpsRxPin, kGpsTxPin, kGpsBaud);
 GpsWebServer gpsWebServer(gpsReceiver);
 }  // namespace
 
+// Global tee: all LOG.println/printf/print go to both the real Serial and
+// LogTail's ring buffer so the debug output can be tailed over the web
+// without a serial connection (see log/LogTail.h). Serial.begin() below is
+// called directly on the real Serial object.
+TeePrint LOG(Serial, LogTail::instance());
+
 void setup() {
   Serial.begin(115200);
   delay(300);
 
-  Serial.println();
-  Serial.println(F("ESP32 Opel1935 ELM327 Emulator"));
-  Serial.printf("[VEHICLE] initial coolantTemperature=%.2f C\n", vehicleState.coolantTemperature);
+  LOG.println();
+  LOG.println(F("ESP32 Opel1935 ELM327 Emulator"));
+  LOG.printf("[VEHICLE] initial coolantTemperature=%.2f C\n", vehicleState.coolantTemperature);
   elm327Server.begin();
 
   // GPS on UART2, then the web UI over the same AP.
@@ -42,5 +49,6 @@ void setup() {
 void loop() {
   elm327Server.update();
   gpsReceiver.update();
+  gpsWebServer.loop();
   delay(2);
 }
