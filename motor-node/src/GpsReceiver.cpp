@@ -10,23 +10,24 @@ namespace {
 
 bool isDigit(char c) { return c >= '0' && c <= '9'; }
 
-// UBX-CFG-MSG (class 0x06, id 0x01): explicitly enable a NMEA sentence on
-// the port the command arrives on, at a rate of 1 per navigation solution.
-// This is a *session-only* setting (no UBX-CFG-CFG save, no reset), so it
-// is safe/idempotent to resend on every boot: it never persists an unwanted
-// config onto the module and can't brick anything, unlike a baud/GNSS/flash
-// change would. Bytes precomputed + Fletcher-checksum verified against
+// UBX-CFG-MSG (class 0x06, id 0x01), legacy 3-byte payload (msgClass, msgId,
+// rate): enables an NMEA sentence at rate 1 on *all* ports. The M8-family
+// receivers (incl. the "NEO-8M" clones that actually contain an M8N and emit
+// $GN talker sentences) accept this short form; the 7-byte per-port variant
+// leaves the UART disabled on many clones, which is why only $GNGLL (emitted
+// by default) ever appeared. Session-only: no CFG-CFG save, no reset, safe to
+// resend on every boot. Fletcher-checksums verified against
 // motor-node/docs/ubx_cmds.py (see issue #20 "NEO-8M/u-blox-Konfiguration").
-constexpr uint8_t kUbxEnableGga[] = {0xB5, 0x62, 0x06, 0x01, 0x07, 0x00, 0xF0, 0x00,
-                                      0x00, 0x00, 0x00, 0x00, 0x01, 0xFF, 0x1C};
-constexpr uint8_t kUbxEnableGsa[] = {0xB5, 0x62, 0x06, 0x01, 0x07, 0x00, 0xF0, 0x02,
-                                      0x00, 0x00, 0x00, 0x00, 0x01, 0x01, 0x28};
-constexpr uint8_t kUbxEnableGsv[] = {0xB5, 0x62, 0x06, 0x01, 0x07, 0x00, 0xF0, 0x03,
-                                      0x00, 0x00, 0x00, 0x00, 0x01, 0x02, 0x2E};
-constexpr uint8_t kUbxEnableRmc[] = {0xB5, 0x62, 0x06, 0x01, 0x07, 0x00, 0xF0, 0x04,
-                                      0x00, 0x00, 0x00, 0x00, 0x01, 0x03, 0x34};
-constexpr uint8_t kUbxEnableVtg[] = {0xB5, 0x62, 0x06, 0x01, 0x07, 0x00, 0xF0, 0x05,
-                                      0x00, 0x00, 0x00, 0x00, 0x01, 0x04, 0x3A};
+constexpr uint8_t kUbxEnableGga[] = {0xB5, 0x62, 0x06, 0x01, 0x03, 0x00, 0xF0, 0x00,
+                                      0x01, 0xFB, 0x10};
+constexpr uint8_t kUbxEnableGsa[] = {0xB5, 0x62, 0x06, 0x01, 0x03, 0x00, 0xF0, 0x02,
+                                      0x01, 0xFD, 0x14};
+constexpr uint8_t kUbxEnableGsv[] = {0xB5, 0x62, 0x06, 0x01, 0x03, 0x00, 0xF0, 0x03,
+                                      0x01, 0xFE, 0x16};
+constexpr uint8_t kUbxEnableRmc[] = {0xB5, 0x62, 0x06, 0x01, 0x03, 0x00, 0xF0, 0x04,
+                                      0x01, 0xFF, 0x18};
+constexpr uint8_t kUbxEnableVtg[] = {0xB5, 0x62, 0x06, 0x01, 0x03, 0x00, 0xF0, 0x05,
+                                      0x01, 0x00, 0x1A};
 
 struct UbxCfgMsg {
   const uint8_t* bytes;
