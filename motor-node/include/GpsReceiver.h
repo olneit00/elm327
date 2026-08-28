@@ -83,9 +83,16 @@ class GpsReceiver {
   // Force the serial baud / pins if the module was reconfigured.
   void setSerial(uint8_t rxPin, uint8_t txPin, uint32_t baud);
 
+  // Enable/disable "[GPS RAW]"/"[GPS GSV]"/"[GPS ERR]" diagnostic logging on
+  // Serial (see issue #20). On by default while the "0 satellites" issue is
+  // being tracked down; the raw line is printed straight from the receive
+  // path, so nothing is stolen from Serial2 ahead of the parser.
+  void setDebugLogging(bool enabled) { debugLogging_ = enabled; }
+
  private:
   void processByte(uint8_t c);
   void resetLine();
+  void configureModule();  // send deterministic UBX-CFG-MSG at begin()
 
   // NMEA sentence parsers (run with mutex held, on loop task).
   void parseLine();
@@ -104,6 +111,7 @@ class GpsReceiver {
   char line_[128];
   uint8_t lineLen_ = 0;
   bool inSentence_ = false;
+  bool debugLogging_ = true;
 
   GpsSnapshot snap_;            // guarded by mutex_
   mutable SemaphoreHandle_t mutex_ = nullptr;

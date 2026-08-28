@@ -9,6 +9,37 @@ namespace {
 
 bool isDigit(char c) { return c >= '0' && c <= '9'; }
 
+// UBX-CFG-MSG (class 0x06, id 0x01): explicitly enable a NMEA sentence on
+// the port the command arrives on, at a rate of 1 per navigation solution.
+// This is a *session-only* setting (no UBX-CFG-CFG save, no reset), so it
+// is safe/idempotent to resend on every boot: it never persists an unwanted
+// config onto the module and can't brick anything, unlike a baud/GNSS/flash
+// change would. Bytes precomputed + Fletcher-checksum verified against
+// motor-node/docs/ubx_cmds.py (see issue #20 "NEO-8M/u-blox-Konfiguration").
+constexpr uint8_t kUbxEnableGga[] = {0xB5, 0x62, 0x06, 0x01, 0x07, 0x00, 0xF0, 0x00,
+                                      0x00, 0x00, 0x00, 0x00, 0x01, 0xFF, 0x1C};
+constexpr uint8_t kUbxEnableGsa[] = {0xB5, 0x62, 0x06, 0x01, 0x07, 0x00, 0xF0, 0x02,
+                                      0x00, 0x00, 0x00, 0x00, 0x01, 0x01, 0x28};
+constexpr uint8_t kUbxEnableGsv[] = {0xB5, 0x62, 0x06, 0x01, 0x07, 0x00, 0xF0, 0x03,
+                                      0x00, 0x00, 0x00, 0x00, 0x01, 0x02, 0x2E};
+constexpr uint8_t kUbxEnableRmc[] = {0xB5, 0x62, 0x06, 0x01, 0x07, 0x00, 0xF0, 0x04,
+                                      0x00, 0x00, 0x00, 0x00, 0x01, 0x03, 0x34};
+constexpr uint8_t kUbxEnableVtg[] = {0xB5, 0x62, 0x06, 0x01, 0x07, 0x00, 0xF0, 0x05,
+                                      0x00, 0x00, 0x00, 0x00, 0x01, 0x04, 0x3A};
+
+struct UbxCfgMsg {
+  const uint8_t* bytes;
+  size_t len;
+  const char* name;
+};
+const UbxCfgMsg kUbxEnableMsgs[] = {
+    {kUbxEnableGga, sizeof(kUbxEnableGga), "GGA"},
+    {kUbxEnableGsa, sizeof(kUbxEnableGsa), "GSA"},
+    {kUbxEnableGsv, sizeof(kUbxEnableGsv), "GSV"},
+    {kUbxEnableRmc, sizeof(kUbxEnableRmc), "RMC"},
+    {kUbxEnableVtg, sizeof(kUbxEnableVtg), "VTG"},
+};
+
 }  // namespace
 
 GpsReceiver::GpsReceiver(uint8_t rxPin, uint8_t txPin, uint32_t baud)
@@ -28,6 +59,19 @@ void GpsReceiver::setSerial(uint8_t rxPin, uint8_t txPin, uint32_t baud) {
 void GpsReceiver::begin() {
   Serial2.begin(baud_, SERIAL_8N1, rxPin_, txPin_);
   Serial.printf("[GPS] UART2 begin rx=%u tx=%u baud=%lu\n", rxPin_, txPin_, baud_);
+  configureModule();
+}
+
+void GpsReceiver::configureModule() {
+  // Deterministically (re-)enable the NMEA sentences we depend on instead of
+  // trusting an unknown factory/previous configuration (see issue #20,
+  // "GSV/GSA/GGA/RMC sicher aktivieren"). Session-only: no CFG-CFG save, no
+  // baud/GNSS change, so this can't leave the module worse off than before.
+  for (const auto& m : kUbxEnableMsgs) {
+    Serial2.write(m.bytes, m.len);
+    Serial.printf("[GPS] UBX CFG-MSG: enable %s on UART\n", m.name);
+    delay(50);  // let the module ack/apply before the next command
+  }
 }
 
 GpsSnapshot GpsReceiver::snapshot() const {
@@ -162,16 +206,27 @@ void GpsReceiver::parseGsa(char** f, int n) {
 void GpsReceiver::parseGsv(char** f, int n) {
   // $GPGSV,totalMsgs,msgNum,totalInView,(prn,elev,azim,snr)xN*cs
   // f[3]=totalInView. Satellites at f[4],f[8],f[12],f[16]...
+  int totalMsgs = atoi(f[1]);
+  int msgNum = atoi(f[2]);
   snap_.satellitesInView = (uint8_t)atoi(f[3]);
+  if (debugLogging_) {
+    Serial.printf("[GPS GSV] msgs=%d msg=%d inView=%d\n", totalMsgs, msgNum, snap_.satellitesInView);
+  }
   for (int base = 4; base + 3 < n; base += 4) {
     if (f[base][0] == '\0') continue;
     int prn = atoi(f[base]);
     if (prn <= 0) continue;
+    int elevation = atoi(f[base + 1]);
+    int azimuth = atoi(f[base + 2]);
+    int snr = atoi(f[base + 3]);
+    if (debugLogging_) {
+      Serial.printf("[GPS GSV]   prn=%d elev=%d azim=%d snr=%d\n", prn, elevation, azimuth, snr);
+    }
     uint8_t slot = (uint8_t)(prn % kGpsMaxSatellites);
     snap_.satellites[slot].prn = (uint8_t)prn;
-    snap_.satellites[slot].elevation = (uint8_t)atoi(f[base + 1]);
-    snap_.satellites[slot].azimuth = (uint16_t)atoi(f[base + 2]);
-    snap_.satellites[slot].snr = (uint8_t)atoi(f[base + 3]);
+    snap_.satellites[slot].elevation = (uint8_t)elevation;
+    snap_.satellites[slot].azimuth = (uint16_t)azimuth;
+    snap_.satellites[slot].snr = (uint8_t)snr;
     snap_.satellites[slot].active = true;
   }
   snap_.valid = true;
@@ -200,8 +255,16 @@ void GpsReceiver::parseZda(char** f, int n) {
 }
 
 void GpsReceiver::processByte(uint8_t c) {
-  if (c == '\n' || c == '\r') {
-    if (c == '\n' && lineLen_ > 0) {
+  // NMEA sentences are terminated "\r\n". Only '\n' ends a sentence; '\r'
+  // must be ignored (NOT reset the buffer), otherwise the '\r' that arrives
+  // just before every '\n' wipes line_ first and the immediately-following
+  // '\n' then sees lineLen_==0 and never parses anything - which used to
+  // mean *no* sentence, ever, made it past this function (issue #20: this
+  // alone is enough to explain "0 satellites", independent of antenna/RF).
+  if (c == '\r') return;
+
+  if (c == '\n') {
+    if (lineLen_ > 0) {
       // line_ = "$...*HH" -> validate checksum then parse.
       char* star = strchr(line_, '*');
       bool csumOk = false;
@@ -212,12 +275,20 @@ void GpsReceiver::processByte(uint8_t c) {
         csumOk = (calc == rx);
       }
       if (csumOk && line_[0] == '$') {
+        if (debugLogging_) {
+          Serial.print("[GPS RAW] ");
+          Serial.println(line_);
+        }
         if (mutex_ && xSemaphoreTake(mutex_, pdMS_TO_TICKS(50)) == pdTRUE) {
           snap_.sentencesParsed++;
+          snap_.lastLineMs = millis();
           parseLine();
           xSemaphoreGive(mutex_);
         }
-      } else if (lineLen_ > 0) {
+      } else {
+        if (debugLogging_) {
+          Serial.printf("[GPS ERR] checksum mismatch, line=\"%s\"\n", line_);
+        }
         if (mutex_ && xSemaphoreTake(mutex_, pdMS_TO_TICKS(50)) == pdTRUE) {
           snap_.checksumErrors++;
           xSemaphoreGive(mutex_);
