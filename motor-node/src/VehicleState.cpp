@@ -42,3 +42,9 @@ uint8_t VehicleState::ignitionAdvanceToObdRaw() const {
   const int raw = static_cast<int>(lroundf((ignitionAdvanceDeg + 64.0f) * 2.0f));
   return clampToByte(raw);
 }
+
+// PID 0x4D: run time since engine start, in minutes (max 65535 min).
+uint16_t VehicleState::runtimeToObdMinutes() const {
+  const uint32_t minutes = runtimeSec / 60U;
+  return minutes > 0xFFFFU ? 0xFFFFU : static_cast<uint16_t>(minutes);
+}

@@ -23,7 +23,7 @@ constexpr uint32_t kGpsBaud = 9600;
 VehicleState vehicleState;
 Elm327Server elm327Server(vehicleState, kAccessPointSsid, kAccessPointPassword, kTcpPort);
 GpsReceiver gpsReceiver(kGpsRxPin, kGpsTxPin, kGpsBaud);
-GpsWebServer gpsWebServer(gpsReceiver);
+GpsWebServer gpsWebServer(gpsReceiver, vehicleState);
 }  // namespace
 
 // Global tee: all LOG.println/printf/print go to both the real Serial and
@@ -47,6 +47,12 @@ void setup() {
 }
 
 void loop() {
+  static uint32_t lastRuntimeMs = 0;
+  if (millis() - lastRuntimeMs >= 1000) {
+    lastRuntimeMs = millis();
+    vehicleState.runtimeSec++;
+  }
+
   elm327Server.update();
   gpsReceiver.update();
   gpsWebServer.loop();

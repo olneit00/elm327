@@ -1,8 +1,8 @@
 #include "GpsWebServer.h"
 #include <WiFi.h>
 
-GpsWebServer::GpsWebServer(GpsReceiver& gps, uint16_t port)
-    : gps_(gps), server_(port) {}
+GpsWebServer::GpsWebServer(GpsReceiver& gps, VehicleState& vehicle, uint16_t port)
+    : gps_(gps), vehicle_(vehicle), server_(port) {}
 
 GpsWebServer::~GpsWebServer() {
   // AsyncWebServer never frees handlers registered via addHandler(), so the
@@ -27,6 +27,29 @@ void GpsWebServer::loop() {
     logEvents_->send(buf, "log", millis());
     logLastSeq_ = maxSeq;
   }
+}
+
+String GpsWebServer::vehicleToJson(const VehicleState& v) {
+  JsonDocument doc;
+  doc["rpm"] = v.rpm;
+  doc["coolantTemperature"] = v.coolantTemperature;
+  doc["speedKmh"] = v.speedKmh;
+  doc["fuelPercent"] = v.fuelPercent;
+  doc["ignitionAdvanceDeg"] = v.ignitionAdvanceDeg;
+  doc["runtimeSec"] = v.runtimeSec;
+
+  // Raw OBD bytes as the ELM327 emulator would answer for each Mode 01 PID,
+  // so the page shows both the engineering value AND the wire value.
+  doc["obd"]["rpmRaw"] = v.rpmToObdRaw();
+  doc["obd"]["coolantRaw"] = v.coolantToObdRaw();
+  doc["obd"]["speedRaw"] = v.speedToObdRaw();
+  doc["obd"]["fuelRaw"] = v.fuelToObdRaw();
+  doc["obd"]["ignitionAdvanceRaw"] = v.ignitionAdvanceToObdRaw();
+  doc["obd"]["runtimeMinutes"] = v.runtimeToObdMinutes();
+
+  String json;
+  serializeJson(doc, json);
+  return json;
 }
 
 String GpsWebServer::snapshotToJson(const GpsSnapshot& s) {
@@ -87,6 +110,13 @@ void GpsWebServer::begin() {
     req->send(r);
   });
 
+  // GET /api/vehicle -> JSON snapshot of all ELM327/OBD live values.
+  server_.on("/api/vehicle", HTTP_GET, [this](AsyncWebServerRequest* req) {
+    AsyncWebServerResponse* r = req->beginResponse(200, "application/json", vehicleToJson(vehicle_));
+    r->addHeader("Cache-Control", "no-store");
+    req->send(r);
+  });
+
   // GET / -> bounce to /gps
   server_.on("/", HTTP_GET, [](AsyncWebServerRequest* req) {
     AsyncWebServerResponse* r = req->beginResponse(302);
@@ -120,7 +150,7 @@ void GpsWebServer::begin() {
       "background:#1f6feb;color:#fff;font-size:13px;font-weight:600}"
       ".mapbtn:disabled{background:#21262d;color:#8b949e;cursor:not-allowed}"
       "</style></head><body>"
-      "<div class=top><h1>📡 GNSS (u-blox NEO-8M)</h1><a href=/log>📋 Live-Log</a></div>"
+      "<div class=top><h1>📡 GNSS (u-blox NEO-8M)</h1><span><a href=/vehicle>🚗 Fahrzeug</a> · <a href=/log>📋 Live-Log</a></span></div>"
       "<div class=card id=conn>…</div>"
       "<div class=card><div class=grid id=pos></div>"
       "<a id=mapbtn class=mapbtn href=# onclick='return openMap()' style='display:none'>🗺 In Google Maps öffnen</a></div>"
@@ -177,6 +207,69 @@ void GpsWebServer::begin() {
       "document.getElementById('csum').textContent=s.checksumErrors;"
       "}function kv(k,v){return '<div class=kv><b>'+k+'</b><span>'+v+'</span></div>'}"
       "load();setInterval(load,2500);"
+      "</script></body></html>";
+    AsyncWebServerResponse* r = req->beginResponse(200, "text/html", html);
+    req->send(r);
+  });
+
+  // GET /vehicle -> all ELM327/OBD live values (+ GPS UTC clock).
+  server_.on("/vehicle", HTTP_GET, [](AsyncWebServerRequest* req) {
+    const char* html =
+      "<!DOCTYPE html><html lang=\"de\"><head><meta charset=\"utf-8\">"
+      "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+      "<title>Fahrzeug</title><style>"
+      "body{font-family:system-ui,sans-serif;background:#0b0f14;color:#e6edf3;margin:0;padding:16px}"
+      "h1{font-size:20px;margin:0 0 14px}"
+      ".card{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:14px;margin-bottom:12px}"
+      ".grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}"
+      ".kv{display:flex;justify-content:space-between;border-bottom:1px solid #21262d;padding:4px 0}"
+      ".kv b{color:#8b949e;font-weight:500}"
+      ".clock{font-size:44px;font-weight:700;text-align:center;color:#58a6ff;margin-bottom:4px}"
+      ".date{font-size:14px;text-align:center;color:#8b949e}"
+      ".top{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}"
+      ".top a{color:#58a6ff;text-decoration:none;font-size:14px}"
+      "table{width:100%;border-collapse:collapse;font-size:13px}"
+      "th,td{text-align:left;padding:4px 8px;border-bottom:1px solid #21262d}"
+      ".muted{color:#8b949e;font-size:12px}"
+      "</style></head><body>"
+      "<div class=top><h1>🚗 Fahrzeug · OBD</h1><span><a href=/gps>📡 GPS</a> · <a href=/log>📋 Live-Log</a></span></div>"
+      "<div class=card><div class=clock id=clock>--:--:--</div>"
+      "<div class=date id=date>UTC · wartet auf GPS-Zeit …</div></div>"
+      "<div class=card><b>Motor</b><div class=grid id=motor></div></div>"
+      "<div class=card><b>Fahrzeug</b><div class=grid id=vehicle></div></div>"
+      "<div class=card><b>Rohdaten (Mode 01 · OBD-Bytes)</b>"
+      "<table><thead><tr><th>PID</th><th>Name</th><th>Raw-Wert</th><th>→ Dezimal</th></tr></thead>"
+      "<tbody id=rawrows></tbody></table></div>"
+      "<div class=card class=muted>Laufzeit seit Motorstart: <span id=runtime></span></div>"
+      "<script>"
+      "let _ch=0,_cm=0,_cs=0,_t0=0;"
+      "function fmt2(n){return (n<10?'0':'')+n}"
+      "function hhmmss(sec){sec=Math.floor(sec)%86400;return fmt2(Math.floor(sec/3600))+':'+fmt2(Math.floor(sec%3600/60))+':'+fmt2(sec%60)}"
+      "async function loadV(){let r=await fetch('/api/vehicle');let v=await r.json();let p=document.getElementById('motor');"
+      "p.innerHTML=kv('Drehzahl',v.rpm+' U/min')+kv('Kühlmitteltemp.',v.coolantTemperature.toFixed(1)+' °C')+"
+      "kv('Zündwinkel',v.ignitionAdvanceDeg.toFixed(1)+' °')+"
+      "kv('Tankinhalt',v.fuelPercent.toFixed(0)+' %');"
+      "let q=document.getElementById('vehicle');"
+      "q.innerHTML=kv('Geschwindigkeit',v.speedKmh.toFixed(1)+' km/h');"
+      "let rows='';function row(pid,name,raw){rows+='<tr><td>'+pid+'</td><td>'+name+'</td><td>'+raw+'</td><td>'+parseInt(raw,16)+'</td></tr>'}"
+      "row('01','Monitors','00 00 00 00');row('04','Load','00');row('05','Kühlmitteltemp.',v.obd.coolantRaw.toString(16).padStart(2,'0'));"
+      "row('0C','Drehzahl',v.obd.rpmRaw.toString(16).padStart(4,'0'));row('0D','Geschw.',v.obd.speedRaw.toString(16).padStart(2,'0'));"
+      "row('0E','Zündwinkel',v.obd.ignitionAdvanceRaw.toString(16).padStart(2,'0'));row('11','Drosselklappe','00');"
+      "row('2F','Tankinhalt',v.obd.fuelRaw.toString(16).padStart(2,'0'));row('4D','Laufzeit',v.obd.runtimeMinutes.toString(16).padStart(4,'0'));"
+      "document.getElementById('rawrows').innerHTML=rows;"
+      "document.getElementById('runtime').textContent=hhmmss(v.runtimeSec);"
+      "}"
+      "async function loadClock(){let r=await fetch('/api/gps');let s=await r.json();"
+      "if(s.dateValid){_ch=s.utcHour;_cm=s.utcMin;_cs=s.utcSec;_t0=Date.now();"
+      "document.getElementById('date').textContent='UTC · '+s.utcDay+'.'+s.utcMonth+'.'+s.utcYear;}"
+      "else{document.getElementById('date').textContent='UTC · wartet auf GPS-Zeit …'}"
+      "}"
+      "function tickClock(){if(!_t0){return}"
+      "document.getElementById('clock').textContent=hhmmss((_ch*3600+_cm*60+_cs)+Math.floor((Date.now()-_t0)/1000))}"
+      "function kv(k,v){return '<div class=kv><b>'+k+'</b><span>'+v+'</span></div>'}"
+      "loadV();setInterval(loadV,2500);"
+      "loadClock();setInterval(loadClock,10000);"
+      "setInterval(tickClock,1000);"
       "</script></body></html>";
     AsyncWebServerResponse* r = req->beginResponse(200, "text/html", html);
     req->send(r);

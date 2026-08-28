@@ -20,7 +20,7 @@ constexpr char kVehicleDesignation[] = "Opel 1,2 ltr.";
 // Supported-PID bitmasks (0100/0120/0140/...) are derived from this list instead
 // of being copied from a reference vehicle, so a PID is only ever reported as
 // "supported" when a matching handler exists in buildMode01Response().
-const uint8_t kSupportedPids[] = {0x01, 0x04, 0x05, 0x0C, 0x0D, 0x0E, 0x11, 0x2F};
+const uint8_t kSupportedPids[] = {0x01, 0x04, 0x05, 0x0C, 0x0D, 0x0E, 0x11, 0x2F, 0x4D};
 
 // Mode 09 PIDs this emulator answers (VIN / Calibration ID).
 const uint8_t kSupportedMode09Pids[] = {0x02, 0x04};
@@ -783,6 +783,13 @@ String Elm327Server::buildMode01Response(uint8_t pid) const {
     LOG.println(formatByte(raw));
 #endif
     return response;
+  }
+
+  // PID 0x4D: run time since engine start, in minutes (2 bytes).
+  if (pid == 0x4D) {
+    const uint16_t minutes = vehicleState_.runtimeToObdMinutes();
+    const uint8_t data[] = {static_cast<uint8_t>((minutes >> 8) & 0xFFU), static_cast<uint8_t>(minutes & 0xFFU)};
+    return makeMode01Response(0x4D, data, sizeof(data));
   }
 
   return "";
