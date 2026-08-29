@@ -718,6 +718,13 @@ String Elm327Server::buildMode01Response(uint8_t pid) const {
 #ifdef ELM_VERBOSE
     LOG.printf("[OBD] coolantTemperature before conversion=%.2f C\n", vehicleState_.coolantTemperature);
 #endif
+    // Real ECT sensor: when it currently reports a fault (open/short/out of
+    // range) we still answer with the last known good temperature rather than
+    // "NO DATA", so the ELM stream stays responsive, but we surface the fault
+    // on the log + ./vehicle page (vehicleState_.coolantTemperatureValid).
+    if (!vehicleState_.coolantTemperatureValid) {
+      LOG.println(F("[OBD] ECT sensor fault -> serving last known coolant temperature"));
+    }
     const uint8_t raw = vehicleState_.coolantToObdRaw();
     const uint8_t data[] = {raw};
     const String response = makeMode01Response(0x05, data, sizeof(data));

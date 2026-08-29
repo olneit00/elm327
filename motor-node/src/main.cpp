@@ -4,6 +4,7 @@
 #include "Elm327Server.h"
 #include "GpsReceiver.h"
 #include "GpsWebServer.h"
+#include "TemperatureSensor.h"
 #include "VehicleState.h"
 
 namespace {
@@ -20,10 +21,18 @@ constexpr uint8_t kGpsRxPin = 16;  // module TXD -> ESP32 GPIO16 (RX)
 constexpr uint8_t kGpsTxPin = 17;  // module RXD -> ESP32 GPIO17 (TX)
 constexpr uint32_t kGpsBaud = 9600;
 
+// ECT temperature sensor (ADC).
+//   GPIO34: ADC1 input, input-only, no internal pull-up -> external 510-ohm
+//   pull-up is the only load on the divider. See TemperatureSensor.h.
+constexpr uint8_t kTempAdcPin = 34;
+constexpr float kTempPullupOhm = 510.0f;
+constexpr float kTempSupplyVoltage = 3.3f;
+
 VehicleState vehicleState;
 Elm327Server elm327Server(vehicleState, kAccessPointSsid, kAccessPointPassword, kTcpPort);
 GpsReceiver gpsReceiver(kGpsRxPin, kGpsTxPin, kGpsBaud);
-GpsWebServer gpsWebServer(gpsReceiver, vehicleState);
+TemperatureSensor temperatureSensor(kTempAdcPin, kTempPullupOhm, kTempSupplyVoltage);
+GpsWebServer gpsWebServer(gpsReceiver, vehicleState, temperatureSensor);
 }  // namespace
 
 // Global tee: all LOG.println/printf/print go to both the real Serial and
@@ -41,7 +50,8 @@ void setup() {
   LOG.printf("[VEHICLE] initial coolantTemperature=%.2f C\n", vehicleState.coolantTemperature);
   elm327Server.begin();
 
-  // GPS on UART2, then the web UI over the same AP.
+  // ECT sensor on ADC1, then GPS on UART2, then the web UI over the same AP.
+  temperatureSensor.begin();
   gpsReceiver.begin();
   gpsWebServer.begin();
 }
@@ -52,6 +62,13 @@ void loop() {
     lastRuntimeMs = millis();
     vehicleState.runtimeSec++;
   }
+
+  // Sensor -> central vehicle model. getTemperatureC() holds the last good
+  // reading while a fault is active; the validity flag lets ELM327/UI decide
+  // whether to trust it.
+  temperatureSensor.update();
+  vehicleState.coolantTemperature = temperatureSensor.getTemperatureC();
+  vehicleState.coolantTemperatureValid = temperatureSensor.isValid();
 
   elm327Server.update();
   gpsReceiver.update();

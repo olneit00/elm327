@@ -18,12 +18,14 @@
 #include <ESPAsyncWebServer.h>
 #include <ArduinoJson.h>
 #include "GpsReceiver.h"
+#include "TemperatureSensor.h"
 #include "VehicleState.h"
 #include "log/LogTail.h"
 
 class GpsWebServer {
  public:
-  GpsWebServer(GpsReceiver& gps, VehicleState& vehicle, uint16_t port = 80);
+  GpsWebServer(GpsReceiver& gps, VehicleState& vehicle, TemperatureSensor& sensor,
+               uint16_t port = 80);
   ~GpsWebServer();
 
   void begin();
@@ -31,11 +33,12 @@ class GpsWebServer {
 
  private:
   static String snapshotToJson(const GpsSnapshot& s);
-  static String vehicleToJson(const VehicleState& v);
+  static String vehicleToJson(const VehicleState& v, const TemperatureSensor& sensor);
   void setupLogTail();
 
   GpsReceiver& gps_;
   VehicleState& vehicle_;
+  TemperatureSensor& sensor_;
   AsyncWebServer server_;
   AsyncEventSource* logEvents_ = nullptr;
   uint64_t logLastSeq_ = 0;

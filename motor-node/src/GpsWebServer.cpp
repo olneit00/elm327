@@ -1,8 +1,9 @@
 #include "GpsWebServer.h"
 #include <WiFi.h>
 
-GpsWebServer::GpsWebServer(GpsReceiver& gps, VehicleState& vehicle, uint16_t port)
-    : gps_(gps), vehicle_(vehicle), server_(port) {}
+GpsWebServer::GpsWebServer(GpsReceiver& gps, VehicleState& vehicle,
+                           TemperatureSensor& sensor, uint16_t port)
+    : gps_(gps), vehicle_(vehicle), sensor_(sensor), server_(port) {}
 
 GpsWebServer::~GpsWebServer() {
   // AsyncWebServer never frees handlers registered via addHandler(), so the
@@ -29,14 +30,29 @@ void GpsWebServer::loop() {
   }
 }
 
-String GpsWebServer::vehicleToJson(const VehicleState& v) {
+String GpsWebServer::vehicleToJson(const VehicleState& v, const TemperatureSensor& sensor) {
   JsonDocument doc;
   doc["rpm"] = v.rpm;
   doc["coolantTemperature"] = v.coolantTemperature;
+  doc["coolantTemperatureValid"] = v.coolantTemperatureValid;
   doc["speedKmh"] = v.speedKmh;
   doc["fuelPercent"] = v.fuelPercent;
   doc["ignitionAdvanceDeg"] = v.ignitionAdvanceDeg;
   doc["runtimeSec"] = v.runtimeSec;
+
+  // Real ECT sensor diagnostics (commissioning): raw ADC + measured voltage +
+  // resistance + fault status. Fault is also reflected by coolantTemperatureValid.
+  const char* status = "OK";
+  switch (sensor.getStatus()) {
+    case CoolantSensorStatus::OPEN_CIRCUIT: status = "OPEN_CIRCUIT"; break;
+    case CoolantSensorStatus::SHORT_CIRCUIT: status = "SHORT_CIRCUIT"; break;
+    case CoolantSensorStatus::OUT_OF_RANGE: status = "OUT_OF_RANGE"; break;
+    case CoolantSensorStatus::OK: break;
+  }
+  doc["sensor"]["rawAdc"] = sensor.getRawAdc();
+  doc["sensor"]["voltage"] = sensor.getVoltage();
+  doc["sensor"]["resistance"] = sensor.getResistanceOhm();
+  doc["sensor"]["status"] = status;
 
   // Raw OBD bytes as the ELM327 emulator would answer for each Mode 01 PID,
   // so the page shows both the engineering value AND the wire value.
@@ -112,7 +128,7 @@ void GpsWebServer::begin() {
 
   // GET /api/vehicle -> JSON snapshot of all ELM327/OBD live values.
   server_.on("/api/vehicle", HTTP_GET, [this](AsyncWebServerRequest* req) {
-    AsyncWebServerResponse* r = req->beginResponse(200, "application/json", vehicleToJson(vehicle_));
+    AsyncWebServerResponse* r = req->beginResponse(200, "application/json", vehicleToJson(vehicle_, sensor_));
     r->addHeader("Cache-Control", "no-store");
     req->send(r);
   });
@@ -231,12 +247,15 @@ void GpsWebServer::begin() {
       "table{width:100%;border-collapse:collapse;font-size:13px}"
       "th,td{text-align:left;padding:4px 8px;border-bottom:1px solid #21262d}"
       ".muted{color:#8b949e;font-size:12px}"
+      ".ok{color:#3fb950}.err{color:#f85149}.warn{color:#d29922}"
       "</style></head><body>"
       "<div class=top><h1>🚗 Fahrzeug · OBD</h1><span><a href=/gps>📡 GPS</a> · <a href=/log>📋 Live-Log</a></span></div>"
       "<div class=card><div class=clock id=clock>--:--:--</div>"
       "<div class=date id=date>UTC · wartet auf GPS-Zeit …</div></div>"
       "<div class=card><b>Motor</b><div class=grid id=motor></div></div>"
       "<div class=card><b>Fahrzeug</b><div class=grid id=vehicle></div></div>"
+      "<div class=card><b>Temperatursensor (ADC)</b><span class=muted> GPIO34 · 510 Ω Pull-up · 3,3 V</span>"
+      "<div class=grid id=sensor></div></div>"
       "<div class=card><b>Rohdaten (Mode 01 · OBD-Bytes)</b>"
       "<table><thead><tr><th>PID</th><th>Name</th><th>Raw-Wert</th><th>→ Dezimal</th></tr></thead>"
       "<tbody id=rawrows></tbody></table></div>"
@@ -246,11 +265,20 @@ void GpsWebServer::begin() {
       "function fmt2(n){return (n<10?'0':'')+n}"
       "function hhmmss(sec){sec=Math.floor(sec)%86400;return fmt2(Math.floor(sec/3600))+':'+fmt2(Math.floor(sec%3600/60))+':'+fmt2(sec%60)}"
       "async function loadV(){let r=await fetch('/api/vehicle');let v=await r.json();let p=document.getElementById('motor');"
-      "p.innerHTML=kv('Drehzahl',v.rpm+' U/min')+kv('Kühlmitteltemp.',v.coolantTemperature.toFixed(1)+' °C')+"
+      "let tempTxt='—';if(v.coolantTemperatureValid)tempTxt=v.coolantTemperature.toFixed(1)+' °C';"
+      "else if(v.sensor&&v.sensor.status)tempTxt='<span class=err>'+(v.sensor.status==='OUT_OF_RANGE'?'außerhalb Kennlinie':(v.sensor.status==='OPEN_CIRCUIT'?'Leitung offen':'Kurzschluss'))+'</span>';"
+      "p.innerHTML=kv('Drehzahl',v.rpm+' U/min')+kv('Kühlmitteltemp.',tempTxt)+"
       "kv('Zündwinkel',v.ignitionAdvanceDeg.toFixed(1)+' °')+"
       "kv('Tankinhalt',v.fuelPercent.toFixed(0)+' %');"
       "let q=document.getElementById('vehicle');"
       "q.innerHTML=kv('Geschwindigkeit',v.speedKmh.toFixed(1)+' km/h');"
+      "let s=v.sensor||{};let st=s.status||'—';let stCls=(st==='OK')?'ok':'err';"
+      "let sv=(typeof s.voltage=='number')?s.voltage.toFixed(3)+' V':'—';"
+      "let sr=(typeof s.resistance=='number'&&s.resistance>0)?s.resistance.toFixed(1)+' Ω':'—';"
+      "document.getElementById('sensor').innerHTML="
+      "kv('ADC (raw)',(typeof s.rawAdc=='number')?s.rawAdc:'—')+"
+      "kv('Spannung',sv)+kv('Widerstand',sr)+"
+      "kv('Status','<span class='+stCls+'>'+st+'</span>');"
       "let rows='';function row(pid,name,raw){rows+='<tr><td>'+pid+'</td><td>'+name+'</td><td>'+raw+'</td><td>'+parseInt(raw,16)+'</td></tr>'}"
       "row('01','Monitors','00 00 00 00');row('04','Load','00');row('05','Kühlmitteltemp.',v.obd.coolantRaw.toString(16).padStart(2,'0'));"
       "row('0C','Drehzahl',v.obd.rpmRaw.toString(16).padStart(4,'0'));row('0D','Geschw.',v.obd.speedRaw.toString(16).padStart(2,'0'));"
