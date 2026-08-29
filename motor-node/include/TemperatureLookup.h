@@ -15,18 +15,22 @@
 //
 #include <stddef.h>
 
-// Known ECT resistance characteristic, manufacturer spec ~= 5 % tolerance.
-// Resistance falls monotonically as temperature rises.
+// ECT resistance characteristic, measured on the actual sensor(s):
+//   20 C -> 550 Ω,  100 C -> 54 Ω  (both measured)
+// Fits an NTC with β ≈ 3174 (550 Ω @ 20 C, 54 Ω @ 100 C). All other points
+// are derived from that β so the whole table is consistent; the 5 % spec
+// tolerance applies per point. Resistance falls monotonically as temperature
+// rises.
 struct TemperaturePoint {
   float temperatureC;
   float resistanceOhm;
 };
 
 constexpr TemperaturePoint TEMP_TABLE[] = {
-    {20.0f, 3004.0f},  {30.0f, 1868.0f},  {40.0f, 1198.0f}, {50.0f, 789.0f},
-    {60.0f, 522.0f},   {70.0f, 368.0f},   {80.0f, 260.0f},  {90.0f, 187.0f},
-    {100.0f, 137.0f},  {110.0f, 102.0f},  {120.0f, 79.2f},  {130.0f, 59.0f},
-    {140.0f, 46.0f},   {150.0f, 36.0f},   {160.0f, 29.0f},  {170.0f, 23.0f},
+    {20.0f, 550.0f},   {30.0f, 384.8f},  {40.0f, 275.5f}, {50.0f, 201.3f},
+    {60.0f, 149.9f},   {70.0f, 113.6f},  {80.0f, 87.4f},  {90.0f, 68.3f},
+    {100.0f, 54.0f},   {110.0f, 43.3f},  {120.0f, 35.0f}, {130.0f, 28.7f},
+    {140.0f, 23.7f},   {150.0f, 19.8f},  {160.0f, 16.6f}, {170.0f, 14.1f},
 };
 constexpr size_t TEMP_TABLE_COUNT = sizeof(TEMP_TABLE) / sizeof(TEMP_TABLE[0]);
 
@@ -52,7 +56,7 @@ bool tempResistanceInRange(float resistanceOhm);
 // the interval with TEMP_TABLE[i].r >= R >= TEMP_TABLE[i+1].r).
 //
 // Out-of-table values are NOT extrapolated: they are clamped to the nearest
-// table edge (20 C for R > 3004, 170 C for R < 23). Callers must check
+// table edge (20 C for R > 550, 170 C for R < 14.1). Callers must check
 // tempResistanceInRange() (or the sensor's status) before treating the result
 // as a plausible reading.
 float resistanceToTemperature(float resistanceOhm);
