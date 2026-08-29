@@ -11,7 +11,13 @@ struct VehicleState {
   // True only while the hardware ECT sensor reports a valid (OK) reading.
   // PID 05 / web UI use this to distinguish a real value from the fallback.
   bool coolantTemperatureValid = false;
+  // Ground speed. Driven by the live GPS fix in loop(); defaults to the old
+  // emulator value 42.0 as a fallback while no fix is available.
   float speedKmh = 42.0f;
+  // True while speedKmh comes from a live GPS fix (RMC status A).
+  bool gpsSpeedValid = false;
+  // Trip distance accumulated from successive GPS fixes (haversine), km.
+  float tripDistanceKm = 0.0f;
   float fuelPercent = 30.0f;
   float ignitionAdvanceDeg = 10.0f;
   uint32_t runtimeSec = 0;  // seconds since engine start (fake, ticks in loop())

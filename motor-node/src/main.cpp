@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <math.h>
 #include "log/LogTail.h"
 
 #include "Elm327Server.h"
@@ -69,6 +70,34 @@ void loop() {
   temperatureSensor.update();
   vehicleState.coolantTemperature = temperatureSensor.getTemperatureC();
   vehicleState.coolantTemperatureValid = temperatureSensor.isValid();
+
+  // GPS -> speed + trip distance. When a fix is present we feed the live
+  // ground speed into the central model (PID 0x0D / /vehicle page) and add
+  // the distance travelled since the last fix to tripDistanceKm.
+  GpsSnapshot gps = gpsReceiver.snapshot();
+  if (gps.activeFix) {
+    vehicleState.speedKmh = gps.speedKmh;
+    vehicleState.gpsSpeedValid = true;
+    static double lastLat = NAN, lastLon = NAN;
+    static bool haveLast = false;
+    if (haveLast && (gps.latitude != lastLat || gps.longitude != lastLon)) {
+      constexpr double kDegToRad = 3.14159265358979323846 / 180.0;
+      constexpr double kEarthRadiusKm = 6371.0088;
+      // Haveresine distance, km.
+      const double dLat = (gps.latitude - lastLat) * kDegToRad;
+      const double dLon = (gps.longitude - lastLon) * kDegToRad;
+      const double a = sin(dLat / 2.0) * sin(dLat / 2.0) +
+                       cos(lastLat * kDegToRad) * cos(gps.latitude * kDegToRad) *
+                           sin(dLon / 2.0) * sin(dLon / 2.0);
+      const double c = 2.0 * atan2(sqrt(a), sqrt(1.0 - a));
+      vehicleState.tripDistanceKm += static_cast<float>(kEarthRadiusKm * c);
+    }
+    lastLat = gps.latitude;
+    lastLon = gps.longitude;
+    haveLast = true;
+  } else {
+    vehicleState.gpsSpeedValid = false;
+  }
 
   elm327Server.update();
   gpsReceiver.update();

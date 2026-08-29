@@ -36,12 +36,15 @@ String GpsWebServer::vehicleToJson(const VehicleState& v, const TemperatureSenso
   doc["coolantTemperature"] = v.coolantTemperature;
   doc["coolantTemperatureValid"] = v.coolantTemperatureValid;
   doc["speedKmh"] = v.speedKmh;
+  doc["speedValid"] = v.gpsSpeedValid;
+  doc["tripDistanceKm"] = v.tripDistanceKm;
   doc["fuelPercent"] = v.fuelPercent;
   doc["ignitionAdvanceDeg"] = v.ignitionAdvanceDeg;
   doc["runtimeSec"] = v.runtimeSec;
 
   // Real ECT sensor diagnostics (commissioning): raw ADC + measured voltage +
-  // resistance + fault status. Fault is also reflected by coolantTemperatureValid.
+  // resistance + converted temperature + fault status. Fault is also
+  // reflected by coolantTemperatureValid.
   const char* status = "OK";
   switch (sensor.getStatus()) {
     case CoolantSensorStatus::OPEN_CIRCUIT: status = "OPEN_CIRCUIT"; break;
@@ -52,6 +55,7 @@ String GpsWebServer::vehicleToJson(const VehicleState& v, const TemperatureSenso
   doc["sensor"]["rawAdc"] = sensor.getRawAdc();
   doc["sensor"]["voltage"] = sensor.getVoltage();
   doc["sensor"]["resistance"] = sensor.getResistanceOhm();
+  doc["sensor"]["temperatureC"] = sensor.getTemperatureC();
   doc["sensor"]["status"] = status;
 
   // Raw OBD bytes as the ELM327 emulator would answer for each Mode 01 PID,
@@ -271,19 +275,27 @@ void GpsWebServer::begin() {
       "kv('Zündwinkel',v.ignitionAdvanceDeg.toFixed(1)+' °')+"
       "kv('Tankinhalt',v.fuelPercent.toFixed(0)+' %');"
       "let q=document.getElementById('vehicle');"
-      "q.innerHTML=kv('Geschwindigkeit',v.speedKmh.toFixed(1)+' km/h');"
+      "let spd=(v.speedValid?'':'<span class=warn>(kein Fix)</span> ')+v.speedKmh.toFixed(1)+' km/h';"
+      "q.innerHTML=kv('Geschwindigkeit (GPS)',spd)+"
+      "kv('Strecke (Trip)',v.tripDistanceKm.toFixed(3)+' km');"
       "let s=v.sensor||{};let st=s.status||'—';let stCls=(st==='OK')?'ok':'err';"
       "let sv=(typeof s.voltage=='number')?s.voltage.toFixed(3)+' V':'—';"
       "let sr=(typeof s.resistance=='number'&&s.resistance>0)?s.resistance.toFixed(1)+' Ω':'—';"
+      "let stemp=(typeof s.temperatureC=='number'&&s.temperatureC>0)?s.temperatureC.toFixed(1)+' °C':'—';"
       "document.getElementById('sensor').innerHTML="
       "kv('ADC (raw)',(typeof s.rawAdc=='number')?s.rawAdc:'—')+"
       "kv('Spannung',sv)+kv('Widerstand',sr)+"
+      "kv('Temperatur',stemp)+"
       "kv('Status','<span class='+stCls+'>'+st+'</span>');"
-      "let rows='';function row(pid,name,raw){rows+='<tr><td>'+pid+'</td><td>'+name+'</td><td>'+raw+'</td><td>'+parseInt(raw,16)+'</td></tr>'}"
-      "row('01','Monitors','00 00 00 00');row('04','Load','00');row('05','Kühlmitteltemp.',v.obd.coolantRaw.toString(16).padStart(2,'0'));"
-      "row('0C','Drehzahl',v.obd.rpmRaw.toString(16).padStart(4,'0'));row('0D','Geschw.',v.obd.speedRaw.toString(16).padStart(2,'0'));"
-      "row('0E','Zündwinkel',v.obd.ignitionAdvanceRaw.toString(16).padStart(2,'0'));row('11','Drosselklappe','00');"
-      "row('2F','Tankinhalt',v.obd.fuelRaw.toString(16).padStart(2,'0'));row('4D','Laufzeit',v.obd.runtimeMinutes.toString(16).padStart(4,'0'));"
+      "let rows='';function row(pid,name,raw,dec){rows+='<tr><td>'+pid+'</td><td>'+name+'</td><td>'+raw+'</td><td>'+dec+'</td></tr>'}"
+      "let coolC=v.coolantTemperatureValid?v.coolantTemperature.toFixed(1)+' °C':'—';"
+      "row('01','Monitors (seit Code-Clear)','00 00 00 00','0 (emuliert)');"
+      "row('04','Load','00','0');row('05','Kühlmitteltemp.','41 05 '+v.obd.coolantRaw.toString(16).padStart(2,'0'),coolC);"
+      "row('0C','Drehzahl',v.obd.rpmRaw.toString(16).padStart(4,'0'),v.rpm+' U/min');"
+      "row('0D','Geschw.',v.obd.speedRaw.toString(16).padStart(2,'0'),v.speedKmh.toFixed(1)+' km/h');"
+      "row('0E','Zündwinkel',v.obd.ignitionAdvanceRaw.toString(16).padStart(2,'0'),v.ignitionAdvanceDeg.toFixed(1)+' °');"
+      "row('11','Drosselklappe','00','0');row('2F','Tankinhalt',v.obd.fuelRaw.toString(16).padStart(2,'0'),v.fuelPercent.toFixed(0)+' %');"
+      "row('4D','Laufzeit',v.obd.runtimeMinutes.toString(16).padStart(4,'0'),hhmmss(v.runtimeSec));"
       "document.getElementById('rawrows').innerHTML=rows;"
       "document.getElementById('runtime').textContent=hhmmss(v.runtimeSec);"
       "}"
