@@ -1,0 +1,9 @@
+# Name,   Type, SubType, Offset,  Size,    Flags
+# 4 MB flash, no OTA: full 3 MB for the app.
+# Motor-node ships firmware via serial (physical), no OTA yet; SPIFFS stays
+# for optional filesystem use. Gives the app ~3 MB instead of the default
+# 2x1.25 MB OTA layout (was the reason flash usage sat at ~99 %, issue #23).
+nvs,      data, nvs,     0x9000,  0x5000,
+app0,     app,  factory, 0x10000, 0x300000,
+spiffs,   data, spiffs,  0x310000, 0xE0000,
+coredump, data, coredump,0x3F0000, 0x10000,

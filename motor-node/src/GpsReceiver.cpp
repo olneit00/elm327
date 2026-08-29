@@ -16,33 +16,32 @@ bool isDigit(char c) { return c >= '0' && c <= '9'; }
 // $GN talker sentences) accept this short form; the 7-byte per-port variant
 // leaves the UART disabled on many clones, which is why only $GNGLL (emitted
 // by default) ever appeared. Session-only: no CFG-CFG save, no reset, safe to
-// resend on every boot. Fletcher-checksums verified against
-// motor-node/docs/ubx_cmds.py (see issue #20 "NEO-8M/u-blox-Konfiguration").
-constexpr uint8_t kUbxEnableGga[] = {0xB5, 0x62, 0x06, 0x01, 0x03, 0x00, 0xF0, 0x00,
-                                      0x01, 0xFB, 0x10};
-constexpr uint8_t kUbxEnableGsa[] = {0xB5, 0x62, 0x06, 0x01, 0x03, 0x00, 0xF0, 0x02,
-                                      0x01, 0xFD, 0x14};
-constexpr uint8_t kUbxEnableGsv[] = {0xB5, 0x62, 0x06, 0x01, 0x03, 0x00, 0xF0, 0x03,
-                                      0x01, 0xFE, 0x16};
-constexpr uint8_t kUbxEnableRmc[] = {0xB5, 0x62, 0x06, 0x01, 0x03, 0x00, 0xF0, 0x04,
-                                      0x01, 0xFF, 0x18};
-constexpr uint8_t kUbxEnableVtg[] = {0xB5, 0x62, 0x06, 0x01, 0x03, 0x00, 0xF0, 0x05,
-                                      0x01, 0x00, 0x1A};
-
-struct UbxCfgMsg {
-  const uint8_t* bytes;
-  size_t len;
-  const char* name;
-};
-const UbxCfgMsg kUbxEnableMsgs[] = {
-    {kUbxEnableGga, sizeof(kUbxEnableGga), "GGA"},
-    {kUbxEnableGsa, sizeof(kUbxEnableGsa), "GSA"},
-    {kUbxEnableGsv, sizeof(kUbxEnableGsv), "GSV"},
-    {kUbxEnableRmc, sizeof(kUbxEnableRmc), "RMC"},
-    {kUbxEnableVtg, sizeof(kUbxEnableVtg), "VTG"},
-};
+// resend on every boot.
+//
+// Issued here shortly after UART config.  The F0 byte is the NMEA sub-class,
+// followed by the message ID (GGA=0x00, GSA=0x02, GSV=0x03, RMC=0x04, VTG=0x05).
+// Frame header (6 bytes) + checksum (2 bytes) surround the 3-byte payload, so
+// the full frame is 11 bytes: B5 62 0x06 0x01 0x03 0x00 F0 <id> 0x01 <CK_A> <CK_B>.
+// Fletcher checksums are listed per message; validated against docs/ubx_cmds.py.
+inline void sendUbxCfgMsg(uint8_t msgId, uint8_t ckA, uint8_t ckB) {
+  const uint8_t frame[11] = {0xB5, 0x62, 0x06, 0x01, 0x03, 0x00, 0xF0, msgId, 0x01, ckA, ckB};
+  Serial2.write(frame, sizeof(frame));
+}
 
 }  // namespace
+
+void GpsReceiver::configureModule() {
+  // Deterministically (re-)enable the NMEA sentences we depend on instead of
+  // trusting an unknown factory/previous configuration (see issue #20,
+  // "GSV/GSA/GGA/RMC sicher aktivieren"). Session-only: no CFG-CFG save, no
+  // baud/GNSS change, so this can't leave the module worse off than before.
+  sendUbxCfgMsg(0x00, 0xFB, 0x10);  delay(50);  // GGA
+  sendUbxCfgMsg(0x02, 0xFD, 0x14);  delay(50);  // GSA
+  sendUbxCfgMsg(0x03, 0xFE, 0x16);  delay(50);  // GSV
+  sendUbxCfgMsg(0x04, 0xFF, 0x18);  delay(50);  // RMC
+  sendUbxCfgMsg(0x05, 0x00, 0x1A);              // VTG
+  LOG.println(F("[GPS] UBX CFG-MSG: enabled GGA/GSA/GSV/RMC/VTG on UART"));
+}
 
 GpsReceiver::GpsReceiver(uint8_t rxPin, uint8_t txPin, uint32_t baud)
     : rxPin_(rxPin), txPin_(txPin), baud_(baud) {
@@ -62,18 +61,6 @@ void GpsReceiver::begin() {
   Serial2.begin(baud_, SERIAL_8N1, rxPin_, txPin_);
   LOG.printf("[GPS] UART2 begin rx=%u tx=%u baud=%lu\n", rxPin_, txPin_, baud_);
   configureModule();
-}
-
-void GpsReceiver::configureModule() {
-  // Deterministically (re-)enable the NMEA sentences we depend on instead of
-  // trusting an unknown factory/previous configuration (see issue #20,
-  // "GSV/GSA/GGA/RMC sicher aktivieren"). Session-only: no CFG-CFG save, no
-  // baud/GNSS change, so this can't leave the module worse off than before.
-  for (const auto& m : kUbxEnableMsgs) {
-    Serial2.write(m.bytes, m.len);
-    LOG.printf("[GPS] UBX CFG-MSG: enable %s on UART\n", m.name);
-    delay(50);  // let the module ack/apply before the next command
-  }
 }
 
 GpsSnapshot GpsReceiver::snapshot() const {
@@ -251,9 +238,9 @@ void GpsReceiver::parseGsv(char** f, int n) {
   int totalMsgs = atoi(f[1]);
   int msgNum = atoi(f[2]);
   snap_.satellitesInView = (uint8_t)atoi(f[3]);
-  if (debugLogging_) {
-    LOG.printf("[GPS GSV] msgs=%d msg=%d inView=%d\n", totalMsgs, msgNum, snap_.satellitesInView);
-  }
+#ifdef GPS_DEBUG_LOG
+  LOG.printf("[GPS GSV] msgs=%d msg=%d inView=%d\n", totalMsgs, msgNum, snap_.satellitesInView);
+#endif
   for (int base = 4; base + 3 < n; base += 4) {
     if (f[base][0] == '\0') continue;
     int prn = atoi(f[base]);
@@ -261,9 +248,9 @@ void GpsReceiver::parseGsv(char** f, int n) {
     int elevation = atoi(f[base + 1]);
     int azimuth = atoi(f[base + 2]);
     int snr = atoi(f[base + 3]);
-    if (debugLogging_) {
-      LOG.printf("[GPS GSV]   prn=%d elev=%d azim=%d snr=%d\n", prn, elevation, azimuth, snr);
-    }
+#ifdef GPS_DEBUG_LOG
+    LOG.printf("[GPS GSV]   prn=%d elev=%d azim=%d snr=%d\n", prn, elevation, azimuth, snr);
+#endif
     uint8_t slot = (uint8_t)(prn % kGpsMaxSatellites);
     snap_.satellites[slot].prn = (uint8_t)prn;
     snap_.satellites[slot].elevation = (uint8_t)elevation;
@@ -321,16 +308,16 @@ if (line_[0] == '$') {
           snap_.linesReceived++;
           snap_.lastLineMs = millis();
           if (csumOk) {
-            if (debugLogging_) {
-              LOG.print(F("[GPS RAW] "));
-              LOG.println(line_);
-            }
+#ifdef GPS_DEBUG_LOG
+            LOG.print(F("[GPS RAW] "));
+            LOG.println(line_);
+#endif
             snap_.sentencesParsed++;
             parseLine();
           } else {
-            if (debugLogging_) {
-              LOG.printf("[GPS ERR] checksum mismatch, line=\"%s\"\n", line_);
-            }
+#ifdef GPS_DEBUG_LOG
+            LOG.printf("[GPS ERR] checksum mismatch, line=\"%s\"\n", line_);
+#endif
             snap_.checksumErrors++;
           }
           xSemaphoreGive(mutex_);
