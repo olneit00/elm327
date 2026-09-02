@@ -251,7 +251,14 @@ void GpsReceiver::parseGsv(char** f, int n) {
 #ifdef GPS_DEBUG_LOG
     LOG.printf("[GPS GSV]   prn=%d elev=%d azim=%d snr=%d\n", prn, elevation, azimuth, snr);
 #endif
-    uint8_t slot = (uint8_t)(prn % kGpsMaxSatellites);
+    // PRN -> slot used to be "prn % kGpsMaxSatellites", which silently
+    // collides (overwrites a different satellite's data) for any PRN >
+    // kGpsMaxSatellites - e.g. GLONASS PRNs (65-96 in NMEA numbering) would
+    // land on the same slot as GPS PRN 1-32 and clobber it. Slots only
+    // cover PRN 1..kGpsMaxSatellites 1:1 (prn-1); anything outside that
+    // range is dropped instead of corrupting another satellite's slot.
+    if (prn > kGpsMaxSatellites) continue;
+    uint8_t slot = (uint8_t)(prn - 1);
     snap_.satellites[slot].prn = (uint8_t)prn;
     snap_.satellites[slot].elevation = (uint8_t)elevation;
     snap_.satellites[slot].azimuth = (uint16_t)azimuth;

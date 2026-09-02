@@ -44,6 +44,7 @@ class Elm327Server {
   void resetAdapterState();
   void sendResponse(const String& rawCommand, const String& response);
   void bleWriteChunked(const String& text);
+  void pumpBleTx();
   static String escapeForLog(const String& text);
 
   VehicleState& vehicleState_;
@@ -88,4 +89,14 @@ class Elm327Server {
   // Conservative chunk size for BLE notifications: safe even at the default
   // (un-negotiated) ATT MTU of 23 bytes (20 usable payload bytes).
   static constexpr size_t kBleChunkSize = 20;
+
+  // Async BLE chunked-notify state (see bleWriteChunked()/pumpBleTx()).
+  // A blocking delay(15) between chunks used to stall the entire loop
+  // task (GPS parsing, WiFi handling) for tens of ms on multi-chunk
+  // responses; chunks are now sent one per update() call, paced via
+  // millis(), so nothing blocks.
+  String bleTxPending_;
+  size_t bleTxOffset_ = 0;
+  bool bleTxActive_ = false;
+  uint32_t bleTxNextChunkMs_ = 0;
 };

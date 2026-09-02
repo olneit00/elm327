@@ -193,31 +193,56 @@ function renderStations(stations) {
     const list = document.getElementById('station-list');
     if (!list) return;
 
-    list.innerHTML = (stations || [])
-        .map(st => {
-            const isCurrentStation = st.frequency === currentFreq;
-            const stationName = st.programService || ((st.frequency / 100).toFixed(2) + ' MHz');
-            const freq = (st.frequency / 100).toFixed(2);
-            const stereo = st.stereo ? 'Stereo' : 'Mono';
-            const rssi = 'RSSI ' + st.rssi;
+    // Built via DOM APIs (not innerHTML/template strings): stationName
+    // comes from st.programService, which is RDS text broadcast by the
+    // tuned FM station - untrusted input that must never be inserted as
+    // raw HTML.
+    list.innerHTML = '';
+    (stations || []).forEach(st => {
+        const isCurrentStation = st.frequency === currentFreq;
+        const stationName = st.programService || ((st.frequency / 100).toFixed(2) + ' MHz');
+        const freq = (st.frequency / 100).toFixed(2);
+        const stereo = st.stereo ? 'Stereo' : 'Mono';
+        const rssi = 'RSSI ' + st.rssi;
 
-            // +/- shift buttons tune to the station, then fine-shift by 0.1 MHz
-            return `<div class="station-item${isCurrentStation ? ' current' : ''}" onclick="selectStation(${st.frequency})">
-                <div class="station-head">
-                    <div class="station-name">${stationName}</div>
-                    <div class="station-nudge">
-                        <button class="nudge-btn" onclick="event.stopPropagation();nudgeFrom(${st.frequency},-10)">−</button>
-                        <button class="nudge-btn" onclick="event.stopPropagation();nudgeFrom(${st.frequency},10)">+</button>
-                    </div>
-                </div>
-                <div class="station-meta">
-                    <span>${freq} MHz</span>
-                    <span>${stereo}</span>
-                    <span>${rssi}</span>
-                </div>
-            </div>`;
-        })
-        .join('');
+        const item = document.createElement('div');
+        item.className = 'station-item' + (isCurrentStation ? ' current' : '');
+        item.onclick = () => selectStation(st.frequency);
+
+        const head = document.createElement('div');
+        head.className = 'station-head';
+
+        const name = document.createElement('div');
+        name.className = 'station-name';
+        name.textContent = stationName;
+        head.appendChild(name);
+
+        const nudge = document.createElement('div');
+        nudge.className = 'station-nudge';
+        const minusBtn = document.createElement('button');
+        minusBtn.className = 'nudge-btn';
+        minusBtn.textContent = '\u2212';
+        minusBtn.onclick = (e) => { e.stopPropagation(); nudgeFrom(st.frequency, -10); };
+        const plusBtn = document.createElement('button');
+        plusBtn.className = 'nudge-btn';
+        plusBtn.textContent = '+';
+        plusBtn.onclick = (e) => { e.stopPropagation(); nudgeFrom(st.frequency, 10); };
+        nudge.appendChild(minusBtn);
+        nudge.appendChild(plusBtn);
+        head.appendChild(nudge);
+        item.appendChild(head);
+
+        const meta = document.createElement('div');
+        meta.className = 'station-meta';
+        [freq + ' MHz', stereo, rssi].forEach(text => {
+            const span = document.createElement('span');
+            span.textContent = text;
+            meta.appendChild(span);
+        });
+        item.appendChild(meta);
+
+        list.appendChild(item);
+    });
 }
 
 // Update the RDS detail section (PS/RT/PTY/PI/TP/TA/BLER) from a status payload
