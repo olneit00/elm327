@@ -67,13 +67,13 @@ void TemperatureSensor::update() {
 
 void TemperatureSensor::evaluate() {
   status_ = classifyVoltage(filteredVoltage_, pullupOhm_, supplyVoltage_);
+  // Always report the resistance implied by the measured voltage (useful
+  // commissioning info even in a fault state). temperature_ is only updated
+  // on OK so the engine model never sees a made-up value during a fault.
+  resistance_ = voltageToResistance(filteredVoltage_, pullupOhm_, supplyVoltage_);
   if (status_ == CoolantSensorStatus::OK) {
-    resistance_ = voltageToResistance(filteredVoltage_, pullupOhm_, supplyVoltage_);
     temperature_ = resistanceToTemperature(resistance_);
   }
-  // On a fault we deliberately leave resistance_/temperature_ at their last
-  // good values (or 0 before the first fix); isValid() flags the fault so the
-  // caller must not treat the value as a live reading.
 }
 
 float TemperatureSensor::getTemperatureC() const { return temperature_; }
