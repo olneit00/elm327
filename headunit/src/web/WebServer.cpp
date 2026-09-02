@@ -25,8 +25,8 @@ namespace {
 
 }  // namespace
 
-WebServer::WebServer(RadioService& radioService, WifiManager& wifiManager)
-    : _radioService(radioService), _wifiManager(wifiManager) {
+WebServer::WebServer(RadioService& radioService, WifiManager& wifiManager, SystemClock& systemClock)
+    : _radioService(radioService), _wifiManager(wifiManager), _systemClock(systemClock) {
 }
 
 WebServer::~WebServer() {
@@ -89,6 +89,19 @@ void WebServer::loop() {
     // polls LogTail here so new debug lines reach web subscribers without a
     // serial connection.
     pollLogTail();
+
+    // AsyncWebServer doesn't need loop() for its request handling; this is
+    // used only to drive the optional SSE "time" event (issue #9), throttled
+    // to once per displayed second and skipped entirely when nobody is
+    // listening.
+    if (!_events || _events->count() == 0) return;
+
+    DateTime dt = _systemClock.now();
+    if (dt.second == _lastBroadcastSecond) return;
+    _lastBroadcastSecond = dt.second;
+
+    String json = _timeToJson(dt);
+    _events->send(json.c_str(), "time");
 }
 
 void WebServer::_sendJson(AsyncWebServerRequest* request, int code, const char* body) {
@@ -398,6 +411,38 @@ void WebServer::_setupRestEndpoints() {
         _sendJson(request, 200, "{\"success\":true}");
     });
 
+    // GET /api/time - see SystemClock.h for the source priority
+    // (GPS > RDS > NTP > manual > internal fallback) and issue #9 for the
+    // background. "valid" is false only for the internal free-running
+    // fallback (i.e. no RDS/NTP/manual fix has ever landed).
+    _server->on("/api/time", HTTP_GET, [this](AsyncWebServerRequest* request) {
+        String json = _timeToJson(_systemClock.now());
+        AsyncWebServerResponse* response = request->beginResponse(200, "application/json", json);
+        _addCorsHeaders(response);
+        request->send(response);
+    });
+
+    // POST /api/time - manual override, e.g. from a future settings UI.
+    // Overwritten again by the next RDS/NTP fix per the priority order.
+    _registerJsonPost("/api/time", [this](AsyncWebServerRequest* request, const JsonDocument& doc) {
+        DateTime dt = _systemClock.now();
+        if (!doc["year"].isNull()) dt.year = doc["year"] | dt.year;
+        if (!doc["month"].isNull()) dt.month = doc["month"] | dt.month;
+        if (!doc["day"].isNull()) dt.day = doc["day"] | dt.day;
+        if (!doc["hour"].isNull()) dt.hour = doc["hour"] | dt.hour;
+        if (!doc["minute"].isNull()) dt.minute = doc["minute"] | dt.minute;
+        if (!doc["second"].isNull()) dt.second = doc["second"] | dt.second;
+
+        if (dt.month < 1 || dt.month > 12 || dt.day < 1 || dt.day > 31 ||
+            dt.hour > 23 || dt.minute > 59 || dt.second > 59) {
+            _sendJson(request, 400, "{\"error\":\"Invalid date/time\"}");
+            return;
+        }
+
+        _systemClock.setManual(dt);
+        _sendJson(request, 200, "{\"success\":true}");
+    });
+
     // WiFi STA connect endpoint. connectSta() no longer blocks (see
     // WifiManager::connectSta()), so this responds immediately with
     // "connecting" - poll GET /api/wifi/status for the actual outcome.
@@ -448,6 +493,8 @@ void WebServer::_setupSSE() {
         // Send initial status
         String json = _statusToJson(_radioService.getStatus());
         client->send(json.c_str(), "status");
+        // Send initial time (see issue #9 - optional SSE "time" event)
+        client->send(_timeToJson(_systemClock.now()).c_str(), "time");
     });
 
     _server->addHandler(_events);
@@ -607,6 +654,21 @@ String WebServer::_scanProgressToJson(uint8_t progress, uint8_t count, bool scan
     doc["progress"] = progress;
     doc["count"] = count;
     doc["scanning"] = scanning;
+    String json;
+    serializeJson(doc, json);
+    return json;
+}
+
+String WebServer::_timeToJson(const DateTime& dt) {
+    JsonDocument doc;
+    doc["valid"] = dt.valid;
+    doc["source"] = clockSourceName(dt.source);
+    doc["year"] = dt.year;
+    doc["month"] = dt.month;
+    doc["day"] = dt.day;
+    doc["hour"] = dt.hour;
+    doc["minute"] = dt.minute;
+    doc["second"] = dt.second;
     String json;
     serializeJson(doc, json);
     return json;
