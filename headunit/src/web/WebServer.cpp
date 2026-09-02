@@ -23,6 +23,21 @@ namespace {
 // ceiling here; the assets stay minified purely to save flash/RAM, not to
 // dodge a transport bug.
 
+// Upper bound for POST bodies accumulated in AsyncWebServerRequest::_tempObject
+// (see _registerJsonPost() below). Every real payload here (radio config,
+// WiFi credentials, ...) is well under 1 KB; without a cap, a client on the
+// open WiFi AP could send an arbitrarily large body and grow the heap
+// without limit via repeated String::concat(), crashing the device (OOM).
+constexpr size_t kMaxJsonBodySize = 4096;
+
+// Sentinel stored in _tempObject to mark "body already rejected as too
+// large, and an error response already sent from the onBody callback" -
+// distinct from nullptr ("no body received yet") and a real String*
+// ("body accumulated so far"). Needed so the onRequest callback below
+// doesn't try to send a second response for the same request (which
+// ESPAsyncWebServer does not support).
+void* const kBodyRejectedMarker = reinterpret_cast<void*>(1);
+
 }  // namespace
 
 WebServer::WebServer(RadioService& radioService, WifiManager& wifiManager)
@@ -107,6 +122,11 @@ void WebServer::_registerJsonPost(const char* uri, JsonBodyHandler handler) {
     // where repeated abort requests could otherwise leak heap over time).
     _server->on(uri, HTTP_POST,
         [handler](AsyncWebServerRequest* request) {
+            if (request->_tempObject == kBodyRejectedMarker) {
+                // Error response already sent from the onBody callback below.
+                request->_tempObject = nullptr;
+                return;
+            }
             String* body = static_cast<String*>(request->_tempObject);
             request->_tempObject = nullptr;
 
@@ -127,15 +147,35 @@ void WebServer::_registerJsonPost(const char* uri, JsonBodyHandler handler) {
         nullptr,
         [](AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
             (void)index;
-            (void)total;
+            if (request->_tempObject == kBodyRejectedMarker) {
+                return;  // Already rejected this request; ignore remaining chunks.
+            }
+            // Reject oversized bodies (checking both the client-declared
+            // total and the actually-accumulated size, since a client
+            // could send more than it declared in Content-Length).
+            if (total > kMaxJsonBodySize) {
+                delete static_cast<String*>(request->_tempObject);
+                request->_tempObject = kBodyRejectedMarker;
+                request->send(413, "application/json", "{\"error\":\"Request too large\"}");
+                return;
+            }
             if (request->_tempObject == nullptr) {
                 request->_tempObject = new String();
                 request->onDisconnect([request]() {
-                    delete static_cast<String*>(request->_tempObject);
+                    if (request->_tempObject != kBodyRejectedMarker) {
+                        delete static_cast<String*>(request->_tempObject);
+                    }
                     request->_tempObject = nullptr;
                 });
             }
-            static_cast<String*>(request->_tempObject)->concat(reinterpret_cast<const char*>(data), len);
+            String* body = static_cast<String*>(request->_tempObject);
+            if (body->length() + len > kMaxJsonBodySize) {
+                delete body;
+                request->_tempObject = kBodyRejectedMarker;
+                request->send(413, "application/json", "{\"error\":\"Request too large\"}");
+                return;
+            }
+            body->concat(reinterpret_cast<const char*>(data), len);
         });
 }
 

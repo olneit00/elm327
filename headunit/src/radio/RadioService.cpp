@@ -175,6 +175,7 @@ bool RadioService::_initHardware() {
 }
 
 void RadioService::loop() {
+    _applyPendingHardwareOps();
     switch (_state) {
         case RadioState::Off:
             break;
@@ -191,6 +192,38 @@ void RadioService::loop() {
             LOG.printf("[RADIO::LOOP] Scanning state detected, calling _stepScanning\n");
             _stepScanning();
             break;
+    }
+}
+
+void RadioService::_applyPendingHardwareOps() {
+    // Runs exclusively on loop()'s task (main task) - see the comment on
+    // the _*Pending members in RadioService.h for why setVolume()/
+    // setMuted()/powerOn()/powerOff() may not touch _si470x directly.
+    if (_powerOffPending) {
+        _powerOffPending = false;
+        _powerOnPending = false;
+        _si470x.setMute(true);
+        _si470x.setShadownRegister(0x02, 0);  // Power down (ENABLE=0)
+        _si470x.setAllRegisters();
+        _state = RadioState::Off;
+        _notifyStatus();
+        return;
+    }
+    if (_powerOnPending) {
+        _powerOnPending = false;
+        if (_initHardware()) {
+            _state = RadioState::Idle;
+            _notifyStatus();
+        }
+    }
+
+    if (_volumePending) {
+        _volumePending = false;
+        _si470x.setVolume(_pendingVolume);
+    }
+    if (_mutePending) {
+        _mutePending = false;
+        _si470x.setMute(_pendingMuted);
     }
 }
 
@@ -400,21 +433,19 @@ void RadioService::_stepScan() {
 }
 
 bool RadioService::powerOn() {
+    // Deferred to _applyPendingHardwareOps() (loop task) - this may be
+    // called from the async_tcp web task and _initHardware() touches the
+    // Si4703 I2C bus extensively (see the comment on the _*Pending members
+    // in RadioService.h).
     if (_state == RadioState::Off) {
-        if (!_initHardware()) return false;
-        _state = RadioState::Idle;
-        _notifyStatus();
+        _powerOnPending = true;
     }
     return true;
 }
 
 void RadioService::powerOff() {
     if (_state != RadioState::Off) {
-        _si470x.setMute(true);
-        _si470x.setShadownRegister(0x02, 0);  // Power down (ENABLE=0)
-        _si470x.setAllRegisters();
-        _state = RadioState::Off;
-        _notifyStatus();
+        _powerOffPending = true;
     }
 }
 
@@ -551,7 +582,10 @@ bool RadioService::setVolume(uint8_t volume) {
          _config.lastVolume = volume;
      }
 
-     _applyVolume();
+     // Defer the actual _si470x write to loop() (main task) - see the
+     // comment on the _*Pending members in RadioService.h.
+     _pendingVolume = volume;
+     _volumePending = true;
      _notifyStatus();
      return true;
 }
@@ -569,7 +603,10 @@ bool RadioService::setMuted(bool muted) {
          _config.lastMuted = muted;
      }
 
-     _si470x.setMute(muted);
+     // Defer the actual _si470x write to loop() (main task) - see the
+     // comment on the _*Pending members in RadioService.h.
+     _pendingMuted = muted;
+     _mutePending = true;
      _notifyStatus();
      return true;
 }

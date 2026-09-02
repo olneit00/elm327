@@ -82,9 +82,12 @@ function applyStatus(s) {
     updatePointer(s.frequency);
 
     const psEl = document.getElementById('cr-ps');
-    if (psEl) psEl.innerHTML = (s.programService && s.programService.trim()) || '&nbsp;';
+    // programService/radioText are RDS text broadcast by the tuned FM
+    // station - untrusted input, so textContent (not innerHTML) is
+    // required to avoid script injection via a crafted RDS broadcast.
+    if (psEl) psEl.textContent = (s.programService && s.programService.trim()) || '\u00A0';
     const rtEl = document.getElementById('cr-rt');
-    if (rtEl) rtEl.innerHTML = (s.radioText && s.radioText.trim()) || '&nbsp;';
+    if (rtEl) rtEl.textContent = (s.radioText && s.radioText.trim()) || '\u00A0';
 
     const rds = s.rds || {};
     setLamp('lamp-stereo', !!s.stereo);

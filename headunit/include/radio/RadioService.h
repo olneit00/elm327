@@ -143,6 +143,22 @@ private:
     bool _seekPending = false;
     bool _seekUp = true;
 
+    // Pending volume/mute/power requests: setVolume()/setMuted()/powerOn()/
+    // powerOff() are called from the async_tcp web task (via WebServer) and
+    // must NOT touch the Si4703 I2C bus directly - only loop() (main task)
+    // may do that, otherwise its register read-modify-write sequences
+    // (_stepSeeking(), _pollRds(), _updateStatusFromHardware()) can
+    // interleave with a concurrent I2C transaction from the other task and
+    // corrupt the chip's shadow registers. Same pattern as _pendingFrequency
+    // above; applied in _applyPendingHardwareOps(), called at the top of
+    // loop().
+    bool _volumePending = false;
+    uint8_t _pendingVolume = 0;
+    bool _mutePending = false;
+    bool _pendingMuted = false;
+    bool _powerOnPending = false;
+    bool _powerOffPending = false;
+
     // GALA
     float _speedKmh = 0.0f;
     bool _galaEnabled = false;
@@ -163,6 +179,7 @@ StationSelectedCallback _stationSelectedCallback = nullptr;
     bool _initHardware();
     void _applyVolume();
     void _updateStatusFromHardware();
+    void _applyPendingHardwareOps();
 
     // State machine steps
     void _stepIdle();

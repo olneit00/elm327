@@ -280,6 +280,8 @@ void Elm327Server::update() {
 
    acceptClientIfNeeded();
 
+   pumpBleTx();
+
    processBleBytes();
 
    if (client_ && client_.connected()) {
@@ -834,6 +836,12 @@ String Elm327Server::makeMode09TextResponse(uint8_t pid, const char* text) const
 // CAN11) is handled consistently.
 String Elm327Server::formatObdResponse(uint16_t canId, const uint8_t* payload, size_t len) const {
   String response;
+  // Upper bound: up to 3 header tokens ("48 6B 10" / "7E8 06") plus one
+  // "XX " triplet per payload byte. Pre-reserving avoids String's
+  // reallocate-and-copy-on-grow behavior repeating on every appendToken()
+  // call below, which is the main source of heap fragmentation risk for
+  // Arduino String on ESP32.
+  response.reserve(len * 3 + 16);
   bool needSeparator = false;
 
   auto appendToken = [&](const String& token) {
@@ -971,6 +979,10 @@ void Elm327Server::sendResponse(const String& rawCommand, const String& response
   // over the air, so only the last one (the bare ">") ever reaches the
   // client. Exactly one prompt, no orphaned intermediate replies.
   String full;
+  // Upper bound: echoed command + its line ending, plus the response,
+  // plus the trailing line ending and prompt. Pre-reserving avoids
+  // repeated reallocate-and-copy on every += below.
+  full.reserve(rawCommand.length() + response.length() + 8);
   if (echoEnabled_ && !rawCommand.isEmpty()) {
     full += rawCommand;
     full += lineEnding();
@@ -1034,17 +1046,49 @@ void Elm327Server::sendResponse(const String& rawCommand, const String& response
 }
 
 void Elm327Server::bleWriteChunked(const String& text) {
-  size_t offset = 0;
-  while (offset < text.length()) {
-    const size_t chunkLen = min(kBleChunkSize, text.length() - offset);
-    bleTxCharacteristic_->setValue(reinterpret_cast<const uint8_t*>(text.c_str()) + offset, chunkLen);
-    bleTxCharacteristic_->notify();
-    offset += chunkLen;
-    if (offset < text.length()) {
-      // Give the BLE stack time to actually transmit this chunk before its
-      // value is overwritten by the next one.
-      delay(15);
+  if (bleTxActive_) {
+    // Defensive: a new response arrived before the previous multi-chunk
+    // one finished sending (a client pipelining requests, which violates
+    // the ELM327 half-duplex request/response protocol). Finish flushing
+    // the old one synchronously rather than silently corrupting/dropping
+    // it; this does not affect the common case, where bleTxActive_ is
+    // already false by the time the next response is ready.
+    while (bleTxActive_) {
+      if (millis() >= bleTxNextChunkMs_) pumpBleTx();
     }
+  }
+  bleTxPending_ = text;
+  bleTxOffset_ = 0;
+  bleTxActive_ = true;
+  bleTxNextChunkMs_ = 0;
+  pumpBleTx();
+}
+
+void Elm327Server::pumpBleTx() {
+  // Called every update() (loop task). Sends at most one chunk per call,
+  // paced via millis() instead of delay(), so a multi-chunk response never
+  // blocks GPS parsing/WiFi handling on the same task.
+  if (!bleTxActive_) return;
+  if (bleTxCharacteristic_ == nullptr) {
+    bleTxActive_ = false;
+    bleTxPending_ = "";
+    return;
+  }
+  if (millis() < bleTxNextChunkMs_) return;
+
+  const size_t chunkLen = min(kBleChunkSize, bleTxPending_.length() - bleTxOffset_);
+  bleTxCharacteristic_->setValue(
+      reinterpret_cast<const uint8_t*>(bleTxPending_.c_str()) + bleTxOffset_, chunkLen);
+  bleTxCharacteristic_->notify();
+  bleTxOffset_ += chunkLen;
+
+  if (bleTxOffset_ >= bleTxPending_.length()) {
+    bleTxActive_ = false;
+    bleTxPending_ = "";
+  } else {
+    // Give the BLE stack time to actually transmit this chunk before its
+    // value is overwritten by the next one.
+    bleTxNextChunkMs_ = millis() + 15;
   }
 }
 
