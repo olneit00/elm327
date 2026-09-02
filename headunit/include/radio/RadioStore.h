@@ -23,10 +23,6 @@ public:
     bool loadStations(RadioStation* stations, size_t maxStations, size_t& count);
     bool saveStations(const RadioStation* stations, size_t count);
 
-    // Favorites persistence (list of frequencies)
-    bool loadFavorites(uint16_t* favorites, size_t maxFavorites, size_t& count);
-    bool saveFavorites(const uint16_t* favorites, size_t count);
-
     // STA WiFi credentials
     bool loadStaCredentials(char* ssid, char* password);
     bool saveStaCredentials(const char* ssid, const char* password);
@@ -37,7 +33,6 @@ public:
 private:
     static constexpr const char* CONFIG_FILE = "/radio/config.json";
     static constexpr const char* STATIONS_FILE = "/radio/stations.json";
-    static constexpr const char* FAVORITES_FILE = "/radio/favorites.json";
     static constexpr const char* STA_FILE = "/wifi/sta.json";
 
     static bool _ensureDirs();

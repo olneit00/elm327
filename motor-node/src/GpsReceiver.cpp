@@ -241,6 +241,14 @@ void GpsReceiver::parseGsv(char** f, int n) {
 #ifdef GPS_DEBUG_LOG
   LOG.printf("[GPS GSV] msgs=%d msg=%d inView=%d\n", totalMsgs, msgNum, snap_.satellitesInView);
 #endif
+
+  // Start of a new round: forget which slots were touched by the previous
+  // one so satellites that have since dropped out of view get cleared once
+  // this round completes (see gsvTouched_ comment in GpsReceiver.h).
+  if (msgNum <= 1) {
+    memset(gsvTouched_, 0, sizeof(gsvTouched_));
+  }
+
   for (int base = 4; base + 3 < n; base += 4) {
     if (f[base][0] == '\0') continue;
     int prn = atoi(f[base]);
@@ -264,7 +272,20 @@ void GpsReceiver::parseGsv(char** f, int n) {
     snap_.satellites[slot].azimuth = (uint16_t)azimuth;
     snap_.satellites[slot].snr = (uint8_t)snr;
     snap_.satellites[slot].active = true;
+    gsvTouched_[slot] = true;
   }
+
+  // Last message of the round: any slot not seen in this round is a
+  // satellite that fell out of view since the previous one - clear it
+  // instead of leaving it marked active forever.
+  if (msgNum >= totalMsgs) {
+    for (size_t slot = 0; slot < kGpsMaxSatellites; slot++) {
+      if (!gsvTouched_[slot] && snap_.satellites[slot].active) {
+        snap_.satellites[slot] = GpsSnapshot::Satellite{};
+      }
+    }
+  }
+
   snap_.valid = true;
 }
 

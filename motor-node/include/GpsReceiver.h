@@ -122,6 +122,13 @@ class GpsReceiver {
   uint8_t lineLen_ = 0;
   bool inSentence_ = false;
 
+  // Tracks which satellite slots were reported in the GSV round currently
+  // being assembled (reset when msgNum==1, consulted when msgNum==
+  // totalMsgs). Without this, a satellite that drops out of view keeps
+  // showing snap_.satellites[slot].active == true forever, since parseGsv()
+  // only ever sets slots it sees and never clears ones it doesn't.
+  bool gsvTouched_[kGpsMaxSatellites] = {false};
+
   GpsSnapshot snap_;            // guarded by mutex_
   mutable SemaphoreHandle_t mutex_ = nullptr;
 };

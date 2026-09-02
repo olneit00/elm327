@@ -43,7 +43,7 @@ Recherche wird konkrete Maßnahmen liefern:
 
 Issue wird automatisch erstellt mit:
 1. **Findings** (was das Problem ist)
-2. **UBX-Config-Code** (vorgefertigt in `UbxHelper.h`)
+2. **UBX-Config-Code** (siehe Issue #19/#21 - Legacy-CFG-Befehle statt CFG-VAL, `motor-node/docs/NEO8M_UBX_PROTOCOL_REFERENCE.md`)
 3. **Hardware-Mods** (falls nötig)
 4. **Schrittemit Bildern / CLI-Output**
 
@@ -55,7 +55,7 @@ Issue wird automatisch erstellt mit:
 # „NEO-8M: Firmware-Update für AliExpress-Clone"
 
 # Schritte der Issue:
-1. UBX-Befehle via UbxHelper::configSBAS() senden
+1. UBX-Befehle (Legacy-CFG, siehe NEO8M_UBX_PROTOCOL_REFERENCE.md) senden
 2. Neustart + 60 s warten (TTFF - Time-To-First-Fix)
 3. Diagnostics erneut laufen lassen
 4. Feedback in Issue posten
@@ -66,6 +66,6 @@ Issue wird automatisch erstellt mit:
 ## Hilfreiche Dateien
 
 - `DIAGNOSTIC_GPS_NO_FIX.cpp` — Sketc zum Auslesen der raw UART2-Bytes
-- `UbxHelper.h` — UBX-Befehle (wird mit Forschungs-Ergebnissen gefüllt)
+- `docs/NEO8M_UBX_PROTOCOL_REFERENCE.md` — UBX-Befehle (Hex, Checksummen geprüft)
 - `TROUBLESHOOTING_GPS_NO_FIX.md` — Kurze Sofort-Checks
 - Forschungs-Issue (wird angelegt) — Konkrete Schritte + UBX-Payload

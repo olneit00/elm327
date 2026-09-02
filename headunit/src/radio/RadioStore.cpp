@@ -150,40 +150,6 @@ bool RadioStore::saveStations(const RadioStation* stations, size_t count) {
     return ok;
 }
 
-bool RadioStore::loadFavorites(uint16_t* favorites, size_t maxFavorites, size_t& count) {
-    String content = _readFile(FAVORITES_FILE);
-    if (content.isEmpty()) {
-        count = 0;
-        return false;
-    }
-
-    JsonDocument doc;
-    DeserializationError err = deserializeJson(doc, content);
-    if (err) {
-        count = 0;
-        return false;
-    }
-
-    JsonArray arr = doc.as<JsonArray>();
-    count = 0;
-    for (JsonVariant val : arr) {
-        if (count >= maxFavorites) break;
-        favorites[count++] = val.as<uint16_t>();
-    }
-    return true;
-}
-
-bool RadioStore::saveFavorites(const uint16_t* favorites, size_t count) {
-    JsonDocument doc;
-    JsonArray arr = doc.to<JsonArray>();
-    for (size_t i = 0; i < count; i++) {
-        arr.add(favorites[i]);
-    }
-    String json;
-    serializeJson(doc, json);
-    return _writeFile(FAVORITES_FILE, json);
-}
-
 bool RadioStore::loadStaCredentials(char* ssid, char* password) {
     String content = _readFile(STA_FILE);
     if (content.isEmpty()) {
