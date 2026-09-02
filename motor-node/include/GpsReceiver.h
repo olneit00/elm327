@@ -68,6 +68,9 @@ struct GpsSnapshot {
   uint32_t lastLineMs = 0;     // millis() of last valid NMEA sentence parsed
   uint32_t sentencesParsed = 0; // monotonic counter
   uint32_t checksumErrors = 0;
+  uint32_t bytesReceived = 0;  // total raw bytes seen on UART2 (0 = GPS not wired)
+  uint32_t linesReceived = 0;  // total '$' NMEA lines received (any checksum state)
+  uint32_t lastByteMs = 0;     // millis() of last UART byte (data/activity watchdog)
 };
 
 class GpsReceiver {
@@ -83,11 +86,11 @@ class GpsReceiver {
   // Force the serial baud / pins if the module was reconfigured.
   void setSerial(uint8_t rxPin, uint8_t txPin, uint32_t baud);
 
-  // Enable/disable "[GPS RAW]"/"[GPS GSV]"/"[GPS ERR]" diagnostic logging on
-  // Serial (see issue #20). On by default while the "0 satellites" issue is
-  // being tracked down; the raw line is printed straight from the receive
-  // path, so nothing is stolen from Serial2 ahead of the parser.
-  void setDebugLogging(bool enabled) { debugLogging_ = enabled; }
+  // Per-sentence diagnostic logging ("[GPS RAW]"/"[GPS GSV]"/"[GPS ERR]") is
+  // compiled OUT unless GPS_DEBUG_LOG is defined (issue #23: these format
+  // strings + printf call sites were inflating flash). Define it on the
+  // command line to diagnose the "0 satellites" case (issue #20):
+  //   pio run -d motor-node -e esp32dev -D GPS_DEBUG_LOG
 
  private:
   void processByte(uint8_t c);
@@ -104,14 +107,20 @@ class GpsReceiver {
   void parseGll(char** f, int n);
   void parseZda(char** f, int n);
 
+  void logStatus(const GpsSnapshot& s);  // periodic telemetry line on Serial
+
   uint8_t rxPin_, txPin_;
   uint32_t baud_;
+
+  // data/activity counters (write on loop task, read under mutex in snapshot)
+  volatile uint32_t bytesReceived_ = 0;
+  volatile uint32_t lastByteMs_ = 0;
+  uint32_t lastStatusMs_ = 0;
 
   // receive/parse line state (loop task only, no lock needed)
   char line_[128];
   uint8_t lineLen_ = 0;
   bool inSentence_ = false;
-  bool debugLogging_ = true;
 
   GpsSnapshot snap_;            // guarded by mutex_
   mutable SemaphoreHandle_t mutex_ = nullptr;

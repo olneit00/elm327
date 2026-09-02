@@ -1,4 +1,5 @@
 #include "Elm327Server.h"
+#include "log/LogTail.h"
 
 #include <string.h>
 
@@ -19,7 +20,7 @@ constexpr char kVehicleDesignation[] = "Opel 1,2 ltr.";
 // Supported-PID bitmasks (0100/0120/0140/...) are derived from this list instead
 // of being copied from a reference vehicle, so a PID is only ever reported as
 // "supported" when a matching handler exists in buildMode01Response().
-const uint8_t kSupportedPids[] = {0x01, 0x04, 0x05, 0x0C, 0x0D, 0x0E, 0x11, 0x2F};
+const uint8_t kSupportedPids[] = {0x01, 0x04, 0x05, 0x0C, 0x0D, 0x0E, 0x11, 0x2F, 0x4D};
 
 // Mode 09 PIDs this emulator answers (VIN / Calibration ID).
 const uint8_t kSupportedMode09Pids[] = {0x02, 0x04};
@@ -131,18 +132,18 @@ class Elm327Server::BleCallbacks : public NimBLECharacteristicCallbacks {
      }
 
 #ifdef ELM_VERBOSE
-     Serial.print(F("BLE RAW LEN="));
-     Serial.println(value.length());
-     Serial.print(F("BLE RAW ASCII=["));
-     Serial.print(Elm327Server::escapeForLog(String(value.c_str())));
-     Serial.println(F("]"));
-     Serial.print(F("BLE RAW HEX="));
+     LOG.print(F("BLE RAW LEN="));
+     LOG.println(value.length());
+     LOG.print(F("BLE RAW ASCII=["));
+     LOG.print(Elm327Server::escapeForLog(String(value.c_str())));
+     LOG.println(F("]"));
+     LOG.print(F("BLE RAW HEX="));
      for (size_t i = 0; i < value.length(); ++i) {
        char hex[4];
        snprintf(hex, sizeof(hex), "%02X ", static_cast<uint8_t>(value[i]));
-       Serial.print(hex);
+       LOG.print(hex);
      }
-     Serial.println();
+     LOG.println();
 #endif
 
      if (server_.bleRxQueue_ == nullptr) {
@@ -152,7 +153,7 @@ class Elm327Server::BleCallbacks : public NimBLECharacteristicCallbacks {
        const uint8_t byteValue = static_cast<uint8_t>(value[i]);
        if (xQueueSend(server_.bleRxQueue_, &byteValue, 0) != pdTRUE) {
 #ifdef ELM_VERBOSE
-         Serial.println(F("BLE RX queue full, dropping byte"));
+         LOG.println(F("BLE RX queue full, dropping byte"));
 #endif
          break;
        }
@@ -174,7 +175,7 @@ class Elm327Server::BleServerCallbacks : public NimBLEServerCallbacks {
 
    void onConnect(NimBLEServer*, NimBLEConnInfo&) override {
 #ifdef ELM_VERBOSE
-     Serial.println(F("BLE CONNECTED"));
+     LOG.println(F("BLE CONNECTED"));
 #endif
      server_.bleRxBuffer_ = "";
      if (server_.bleRxQueue_ != nullptr) {
@@ -185,8 +186,8 @@ class Elm327Server::BleServerCallbacks : public NimBLEServerCallbacks {
 
    void onDisconnect(NimBLEServer* bleServer, NimBLEConnInfo&, int reason) override {
 #ifdef ELM_VERBOSE
-     Serial.print(F("BLE DISCONNECTED reason="));
-     Serial.println(reason);
+     LOG.print(F("BLE DISCONNECTED reason="));
+     LOG.println(reason);
 #endif
      server_.bleRxBuffer_ = "";
      if (server_.bleRxQueue_ != nullptr) {
@@ -225,7 +226,7 @@ void Elm327Server::begin() {
 
   bleRxQueue_ = xQueueCreate(256, sizeof(uint8_t));
 
-  Serial.printf("[STATE] VehicleState address=%p\n", static_cast<void*>(&vehicleState_));
+  LOG.printf("[STATE] VehicleState address=%p\n", static_cast<void*>(&vehicleState_));
 
   WiFi.mode(WIFI_AP);
   if (password_ != nullptr && strlen(password_) >= 8) {
@@ -259,20 +260,20 @@ void Elm327Server::begin() {
   advertising->setMaxInterval(64);
   advertising->start();
 
-  Serial.println(F("WiFi AP started"));
-  Serial.print(F("SSID: "));
-  Serial.println(ssid_);
-  Serial.print(F("IP: "));
-  Serial.println(WiFi.softAPIP());
-  Serial.print(F("TCP server listening on port "));
-  Serial.println(tcpPort_);
-  Serial.println(F("BLE device: ELM327 Opel1935"));
+  LOG.println(F("WiFi AP started"));
+  LOG.print(F("SSID: "));
+  LOG.println(ssid_);
+  LOG.print(F("IP: "));
+  LOG.println(WiFi.softAPIP());
+  LOG.print(F("TCP server listening on port "));
+  LOG.println(tcpPort_);
+  LOG.println(F("BLE device: ELM327 Opel1935"));
 }
 
 void Elm327Server::update() {
    if (client_ && !client_.connected()) {
 #ifdef ELM_VERBOSE
-     Serial.println(F("Client disconnected"));
+     LOG.println(F("Client disconnected"));
 #endif
      client_.stop();
      rxBuffer_ = "";
@@ -304,8 +305,8 @@ void Elm327Server::acceptClientIfNeeded() {
    rxBuffer_ = "";
 
 #ifdef ELM_VERBOSE
-   Serial.print(F("Client connected: "));
-   Serial.println(client_.remoteIP());
+   LOG.print(F("Client connected: "));
+   LOG.println(client_.remoteIP());
 #endif
 
    // Real ELM327 adapters stay silent until the client sends the first
@@ -333,7 +334,7 @@ void Elm327Server::processClientBytes() {
        rxBuffer_ += ch;
      } else {
 #ifdef ELM_VERBOSE
-       Serial.println(F("RX buffer overflow, dropping command"));
+       LOG.println(F("RX buffer overflow, dropping command"));
 #endif
        rxBuffer_ = "";
        sendResponse("", "?");
@@ -353,15 +354,15 @@ void Elm327Server::processBleBytes() {
        if (bleRxBuffer_.length() > 256) {
          bleRxBuffer_ = "";
 #ifdef ELM_VERBOSE
-         Serial.println(F("BLE RX buffer overflow, dropping command"));
+         LOG.println(F("BLE RX buffer overflow, dropping command"));
 #endif
        }
      }
 #ifdef ELM_VERBOSE
      if (drainedAny) {
-       Serial.print(F("COMMAND BUFFER=["));
-       Serial.print(escapeForLog(bleRxBuffer_));
-       Serial.println(F("]"));
+       LOG.print(F("COMMAND BUFFER=["));
+       LOG.print(escapeForLog(bleRxBuffer_));
+       LOG.println(F("]"));
      }
 #endif
   }
@@ -394,9 +395,9 @@ void Elm327Server::processCommand(const String& rawCommand) {
    }
 
 #ifdef ELM_VERBOSE
-   Serial.print(F("ELM COMMAND=["));
-   Serial.print(normalizedCommand);
-   Serial.println(F("]"));
+   LOG.print(F("ELM COMMAND=["));
+   LOG.print(normalizedCommand);
+   LOG.println(F("]"));
 #endif
 
    String response;
@@ -408,8 +409,8 @@ void Elm327Server::processCommand(const String& rawCommand) {
 
    if (response.isEmpty()) {
 #ifdef ELM_VERBOSE
-     Serial.print(F("UNKNOWN COMMAND: "));
-     Serial.println(rawCommand);
+     LOG.print(F("UNKNOWN COMMAND: "));
+     LOG.println(rawCommand);
 #endif
      response = "?";
    }
@@ -494,13 +495,13 @@ String Elm327Server::handleAtCommand(const String& normalizedCommand) {
 
   if (normalizedCommand == "ATD0") {
     displayDlcEnabled_ = false;
-    Serial.println(F("STATE: displayDlc=false"));
+    LOG.println(F("STATE: displayDlc=false"));
     return "OK";
   }
 
   if (normalizedCommand == "ATD1") {
     displayDlcEnabled_ = true;
-    Serial.println(F("STATE: displayDlc=true"));
+    LOG.println(F("STATE: displayDlc=true"));
     return "OK";
   }
 
@@ -540,9 +541,9 @@ String Elm327Server::handleAtCommand(const String& normalizedCommand) {
         // not really implement, which previously produced undecodable
         // responses and an endless 0100 retry loop in Car Scanner.
         if (requestedProtocol != 6) {
-          Serial.print(F("ATSP: requested protocol "));
-          Serial.print(requestedProtocol);
-          Serial.println(F(" is not emulated, staying on CAN 11/500"));
+          LOG.print(F("ATSP: requested protocol "));
+          LOG.print(requestedProtocol);
+          LOG.println(F(" is not emulated, staying on CAN 11/500"));
         }
         autoProtocol_ = false;
         protocol_ = 6;
@@ -610,8 +611,8 @@ String Elm327Server::handleAtCommand(const String& normalizedCommand) {
   // conformance tester) must be rejected like a real ELM327 does, not
   // acknowledged with "OK". Every command Car Scanner is known to send
   // during initialization is matched explicitly above.
-  Serial.print(F("UNKNOWN COMMAND: "));
-  Serial.println(normalizedCommand);
+  LOG.print(F("UNKNOWN COMMAND: "));
+  LOG.println(normalizedCommand);
   return "?";
 }
 
@@ -641,10 +642,10 @@ String Elm327Server::handleMode01Command(const String& normalizedCommand) {
   const uint8_t pid = static_cast<uint8_t>(pidRaw);
 
 #ifdef ELM_VERBOSE
-  Serial.print(F("OBD MODE=01 PID="));
-  Serial.println(formatByte(pid));
-  Serial.printf("[STATE] VehicleState address=%p\n", static_cast<void*>(&vehicleState_));
-  Serial.printf("[ELM STATE] headers=%s dlc=%s spaces=%s\n", headersEnabled_ ? "true" : "false",
+  LOG.print(F("OBD MODE=01 PID="));
+  LOG.println(formatByte(pid));
+  LOG.printf("[STATE] VehicleState address=%p\n", static_cast<void*>(&vehicleState_));
+  LOG.printf("[ELM STATE] headers=%s dlc=%s spaces=%s\n", headersEnabled_ ? "true" : "false",
                  displayDlcEnabled_ ? "true" : "false", spacesEnabled_ ? "true" : "false");
 #endif
 
@@ -681,8 +682,8 @@ String Elm327Server::handleMode09Command(const String& normalizedCommand) {
   const uint8_t pid = static_cast<uint8_t>(pidRaw);
 
 #ifdef ELM_VERBOSE
-  Serial.print(F("OBD MODE=09 PID="));
-  Serial.println(formatByte(pid));
+  LOG.print(F("OBD MODE=09 PID="));
+  LOG.println(formatByte(pid));
 #endif
 
   if (pid == 0x00) {
@@ -717,15 +718,22 @@ String Elm327Server::buildMode01Response(uint8_t pid) const {
 
   if (pid == 0x05) {
 #ifdef ELM_VERBOSE
-    Serial.printf("[OBD] coolantTemperature before conversion=%.2f C\n", vehicleState_.coolantTemperature);
+    LOG.printf("[OBD] coolantTemperature before conversion=%.2f C\n", vehicleState_.coolantTemperature);
 #endif
+    // Real ECT sensor: when it currently reports a fault (open/short/out of
+    // range) we still answer with the last known good temperature rather than
+    // "NO DATA", so the ELM stream stays responsive, but we surface the fault
+    // on the log + ./vehicle page (vehicleState_.coolantTemperatureValid).
+    if (!vehicleState_.coolantTemperatureValid) {
+      LOG.println(F("[OBD] ECT sensor fault -> serving last known coolant temperature"));
+    }
     const uint8_t raw = vehicleState_.coolantToObdRaw();
     const uint8_t data[] = {raw};
     const String response = makeMode01Response(0x05, data, sizeof(data));
 #ifdef ELM_VERBOSE
-    Serial.printf("[OBD] coolant raw decimal=%u hex=0x%02X\n", raw, raw);
-    Serial.print(F("[OBD] payload=41 05 "));
-    Serial.println(formatByte(raw));
+    LOG.printf("[OBD] coolant raw decimal=%u hex=0x%02X\n", raw, raw);
+    LOG.print(F("[OBD] payload=41 05 "));
+    LOG.println(formatByte(raw));
 #endif
     return response;
   }
@@ -758,32 +766,39 @@ String Elm327Server::buildMode01Response(uint8_t pid) const {
 
   if (pid == 0x0E) {
 #ifdef ELM_VERBOSE
-    Serial.printf("[OBD] ignitionAdvanceDeg=%.2f\n", vehicleState_.ignitionAdvanceDeg);
+    LOG.printf("[OBD] ignitionAdvanceDeg=%.2f\n", vehicleState_.ignitionAdvanceDeg);
 #endif
     const uint8_t raw = vehicleState_.ignitionAdvanceToObdRaw();
     const uint8_t data[] = {raw};
     const String response = makeMode01Response(0x0E, data, sizeof(data));
 #ifdef ELM_VERBOSE
-    Serial.printf("[OBD] raw=%u / 0x%02X\n", raw, raw);
-    Serial.print(F("[OBD] payload=41 0E "));
-    Serial.println(formatByte(raw));
+    LOG.printf("[OBD] raw=%u / 0x%02X\n", raw, raw);
+    LOG.print(F("[OBD] payload=41 0E "));
+    LOG.println(formatByte(raw));
 #endif
     return response;
   }
 
   if (pid == 0x2F) {
 #ifdef ELM_VERBOSE
-    Serial.printf("[OBD] fuelPercent=%.2f\n", vehicleState_.fuelPercent);
+    LOG.printf("[OBD] fuelPercent=%.2f\n", vehicleState_.fuelPercent);
 #endif
     const uint8_t raw = vehicleState_.fuelToObdRaw();
     const uint8_t data[] = {raw};
     const String response = makeMode01Response(0x2F, data, sizeof(data));
 #ifdef ELM_VERBOSE
-    Serial.printf("[OBD] raw=%u / 0x%02X\n", raw, raw);
-    Serial.print(F("[OBD] payload=41 2F "));
-    Serial.println(formatByte(raw));
+    LOG.printf("[OBD] raw=%u / 0x%02X\n", raw, raw);
+    LOG.print(F("[OBD] payload=41 2F "));
+    LOG.println(formatByte(raw));
 #endif
     return response;
+  }
+
+  // PID 0x4D: run time since engine start, in minutes (2 bytes).
+  if (pid == 0x4D) {
+    const uint16_t minutes = vehicleState_.runtimeToObdMinutes();
+    const uint8_t data[] = {static_cast<uint8_t>((minutes >> 8) & 0xFFU), static_cast<uint8_t>(minutes & 0xFFU)};
+    return makeMode01Response(0x4D, data, sizeof(data));
   }
 
   return "";
@@ -889,8 +904,8 @@ String Elm327Server::formatIsoTpResponse(uint16_t canId, const uint8_t* payload,
 
 #ifdef ELM_VERBOSE
   if (frames.size() > 1) {
-    Serial.print(F("ISO-TP: TOTAL LENGTH="));
-    Serial.println(len);
+    LOG.print(F("ISO-TP: TOTAL LENGTH="));
+    LOG.println(len);
   }
 #endif
 
@@ -902,12 +917,12 @@ String Elm327Server::formatIsoTpResponse(uint16_t canId, const uint8_t* payload,
     const String frameText = formatObdResponse(canId, frames[i].data, frames[i].length);
 #ifdef ELM_VERBOSE
     if (frames.size() > 1) {
-      Serial.print(i == 0 ? F("FIRST FRAME=") : F("CONSECUTIVE FRAME "));
+      LOG.print(i == 0 ? F("FIRST FRAME=") : F("CONSECUTIVE FRAME "));
       if (i > 0) {
-        Serial.print(i);
-        Serial.print(F("="));
+        LOG.print(i);
+        LOG.print(F("="));
       }
-      Serial.println(frameText);
+      LOG.println(frameText);
     }
 #endif
     result += frameText;
@@ -994,9 +1009,9 @@ void Elm327Server::sendResponse(const String& rawCommand, const String& response
   full += ">";
 
 #ifdef ELM_VERBOSE
-  Serial.print(F("ELM RESPONSE=["));
-  Serial.print(Elm327Server::escapeForLog(response));
-  Serial.println(F("]"));
+  LOG.print(F("ELM RESPONSE=["));
+  LOG.print(Elm327Server::escapeForLog(response));
+  LOG.println(F("]"));
 #endif
 
   // Diagnostic-only: verify the actual TX stream matches the configured
@@ -1004,42 +1019,42 @@ void Elm327Server::sendResponse(const String& rawCommand, const String& response
   // Kept active outside ELM_VERBOSE since it only prints on a genuine
   // protocol-framing bug, not on every response.
   if (!linefeedsEnabled_ && full.indexOf('\n') >= 0) {
-    Serial.print(F("[ELM ERROR] LF found in TX while ATL0 is active! full=["));
-    Serial.print(escapeForLog(full));
-    Serial.println(F("]"));
+    LOG.print(F("[ELM ERROR] LF found in TX while ATL0 is active! full=["));
+    LOG.print(escapeForLog(full));
+    LOG.println(F("]"));
   } else if (linefeedsEnabled_) {
     for (int i = 0; i < static_cast<int>(full.length()); ++i) {
       if (full[i] == '\n' && (i == 0 || full[i - 1] != '\r')) {
-        Serial.print(F("[ELM ERROR] Lone LF (not preceded by CR) at index "));
-        Serial.print(i);
-        Serial.print(F(" in TX! full=["));
-        Serial.print(escapeForLog(full));
-        Serial.println(F("]"));
+        LOG.print(F("[ELM ERROR] Lone LF (not preceded by CR) at index "));
+        LOG.print(i);
+        LOG.print(F(" in TX! full=["));
+        LOG.print(escapeForLog(full));
+        LOG.println(F("]"));
         break;
       }
     }
   }
 
 #ifdef ELM_VERBOSE
-  Serial.print(F("[ELM TX TEXT] \""));
-  Serial.print(escapeForLog(full));
-  Serial.println(F("\""));
-  Serial.print(F("[ELM TX HEX] "));
+  LOG.print(F("[ELM TX TEXT] \""));
+  LOG.print(escapeForLog(full));
+  LOG.println(F("\""));
+  LOG.print(F("[ELM TX HEX] "));
   for (size_t i = 0; i < full.length(); ++i) {
     char hex[4];
     snprintf(hex, sizeof(hex), "%02X ", static_cast<uint8_t>(full[i]));
-    Serial.print(hex);
+    LOG.print(hex);
   }
-  Serial.println();
+  LOG.println();
 #endif
 
   if (activeTransport_ == Transport::WiFi && client_ && client_.connected()) {
     client_.print(full);
   } else if (activeTransport_ == Transport::Ble && bleTxCharacteristic_ != nullptr) {
 #ifdef ELM_VERBOSE
-    Serial.print(F("BLE TX=["));
-    Serial.print(Elm327Server::escapeForLog(full));
-    Serial.println(F("]"));
+    LOG.print(F("BLE TX=["));
+    LOG.print(Elm327Server::escapeForLog(full));
+    LOG.println(F("]"));
 #endif
     bleWriteChunked(full);
   }

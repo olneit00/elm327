@@ -4,14 +4,28 @@
 
 struct VehicleState {
   uint16_t rpm = 750;
+  // Coolant temperature in deg C. Kept at the former emulator default 82.0 as
+  // a pre-sensor fallback; once the real TemperatureSensor supplies a fix the
+  // field is updated from it and coolantTemperatureValid becomes true.
   float coolantTemperature = 82.0f;
+  // True only while the hardware ECT sensor reports a valid (OK) reading.
+  // PID 05 / web UI use this to distinguish a real value from the fallback.
+  bool coolantTemperatureValid = false;
+  // Ground speed. Driven by the live GPS fix in loop(); defaults to the old
+  // emulator value 42.0 as a fallback while no fix is available.
   float speedKmh = 42.0f;
+  // True while speedKmh comes from a live GPS fix (RMC status A).
+  bool gpsSpeedValid = false;
+  // Trip distance accumulated from successive GPS fixes (haversine), km.
+  float tripDistanceKm = 0.0f;
   float fuelPercent = 30.0f;
   float ignitionAdvanceDeg = 10.0f;
+  uint32_t runtimeSec = 0;  // seconds since engine start (fake, ticks in loop())
 
   uint16_t rpmToObdRaw() const;
   uint8_t coolantToObdRaw() const;
   uint8_t speedToObdRaw() const;
   uint8_t fuelToObdRaw() const;
   uint8_t ignitionAdvanceToObdRaw() const;
+  uint16_t runtimeToObdMinutes() const;
 };
