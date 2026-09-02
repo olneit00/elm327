@@ -115,6 +115,8 @@ GET  /api/radio/config
 POST /api/radio/config
 GET  /api/wifi/status
 POST /api/wifi/connect
+GET  /api/time
+POST /api/time
 ```
 
 Live-Updates erfolgen über Server-Sent Events:

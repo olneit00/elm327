@@ -6,6 +6,7 @@
 #include "display/DisplayManager.h"
 #include "hardware/Pins.h"
 #include "time/TimeProvider.h"
+#include "time/SystemClock.h"
 #include "ui/ClockScreen.h"
 #include "ui/RadioScreen.h"
 #include "radio/RadioService.h"
@@ -31,7 +32,12 @@ RadioScreen radioScreen;
 RadioService radioService;
 RadioStore radioStore;
 WifiManager wifiManager;
-WebServer webServer(radioService, wifiManager);
+// Tracks the best-known wall-clock date/time for GET /api/time (issue #9),
+// independent of `timeSource` above (which only drives the LVGL clock
+// hands and has no concept of a date). See time/SystemClock.h for the
+// source priority (GPS > RDS > NTP > manual > internal fallback).
+SystemClock systemClock;
+WebServer webServer(radioService, wifiManager, systemClock);
 
 #if defined(HEADUNIT_TEST_MODE)
 // Known stamps that place all three hands at unambiguous orientations.
@@ -201,6 +207,7 @@ void setup() {
   // hands on real time between RDS updates.
   radioService.setTimeCallback([](uint8_t hour, uint8_t minute, uint8_t second) {
     timeSource.setSeed(TimeOfDay{hour, minute, second});
+    systemClock.onRdsTime(hour, minute, second);
     LOG.printf("[CLOCK] RDS time synced: %02u:%02u:%02u\n", hour, minute, second);
   });
 
@@ -299,6 +306,10 @@ void loop() {
   if (wifiManager.isApActive()) {
     wifiManager.loop();
   }
+
+  // Drives the periodic NTP (re)sync attempt behind GET /api/time (issue
+  // #9) - only actually contacts a time server while STA is connected.
+  systemClock.loop(wifiManager.isStaConnected());
 
   // Periodic config save (debounced by interval, and only actually written
   // to flash if something changed since the last save).

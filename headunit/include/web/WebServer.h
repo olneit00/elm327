@@ -11,14 +11,16 @@
 #include "radio/RadioTypes.h"
 #include "radio/RadioService.h"
 #include "net/WifiManager.h"
+#include "time/SystemClock.h"
 
 class WebServer {
 public:
-    WebServer(RadioService& radioService, WifiManager& wifiManager);
+    WebServer(RadioService& radioService, WifiManager& wifiManager, SystemClock& systemClock);
     ~WebServer();
 
     bool begin(uint16_t port = 80);
-    void loop();  // Not needed for async, but kept for consistency
+    void loop();  // Drives the periodic SSE "time" broadcast; otherwise not
+                  // needed for async, but kept for interface consistency.
 
     // SSE client management
     void broadcastStatus(const RadioStatus& status);
@@ -31,11 +33,17 @@ public:
 private:
     RadioService& _radioService;
     WifiManager& _wifiManager;
+    SystemClock& _systemClock;
     AsyncWebServer* _server = nullptr;
     AsyncEventSource* _events = nullptr;
     AsyncEventSource* _logEvents = nullptr;
     uint64_t _logLastSeq = 0;   // SSE log publish cursor
     uint32_t _logLastPollMs = 0;
+
+    // Throttling for the periodic SSE "time" broadcast (see loop()) - only
+    // sent once the displayed second actually changes, and only if there
+    // are connected SSE clients.
+    uint8_t _lastBroadcastSecond = 255;
 
     // REST endpoints
     void _setupRestEndpoints();
@@ -61,6 +69,7 @@ private:
     static String _statusToJson(const RadioStatus& status);
     static String _stationListToJson(const RadioStation* stations, size_t count);
     static String _scanProgressToJson(uint8_t progress, uint8_t count, bool scanning);
+    static String _timeToJson(const DateTime& dt);
 
     // CORS
     static void _addCorsHeaders(AsyncWebServerResponse* response);
