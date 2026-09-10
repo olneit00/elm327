@@ -2,6 +2,7 @@
 #include <math.h>
 #include "log/LogTail.h"
 
+#include "CanManager.h"
 #include "Elm327Server.h"
 #include "GpsReceiver.h"
 #include "GpsWebServer.h"
@@ -29,11 +30,18 @@ constexpr uint8_t kTempAdcPin = 34;
 constexpr float kTempPullupOhm = 510.0f;
 constexpr float kTempSupplyVoltage = 3.3f;
 
+// CAN bus (TWAI) wiring to the external transceiver (TJA1050/MCP2551/
+// SN65HVD230); see issue #17 and CONCEPT_CAN_GPS_ARCHITECTURE.md.
+constexpr uint8_t kCanTxPin = 4;   // -> transceiver D (driver input)
+constexpr uint8_t kCanRxPin = 5;   // <- transceiver RX (receiver output)
+constexpr uint32_t kCanBitrateBps = 500000;
+
 VehicleState vehicleState;
 Elm327Server elm327Server(vehicleState, kAccessPointSsid, kAccessPointPassword, kTcpPort);
 GpsReceiver gpsReceiver(kGpsRxPin, kGpsTxPin, kGpsBaud);
 TemperatureSensor temperatureSensor(kTempAdcPin, kTempPullupOhm, kTempSupplyVoltage);
 GpsWebServer gpsWebServer(gpsReceiver, vehicleState, temperatureSensor);
+CanManager canManager(kCanTxPin, kCanRxPin, kCanBitrateBps);
 }  // namespace
 
 // Global tee: all LOG.println/printf/print go to both the real Serial and
@@ -55,6 +63,13 @@ void setup() {
   temperatureSensor.begin();
   gpsReceiver.begin();
   gpsWebServer.begin();
+
+  // CAN bus is optional hardware (transceiver may not be wired yet); a
+  // failed begin() just disables updateAndTransmit() below instead of
+  // blocking the rest of setup().
+  if (!canManager.begin()) {
+    LOG.println(F("[CAN] disabled (init failed)"));
+  }
 }
 
 void loop() {
@@ -102,5 +117,10 @@ void loop() {
   elm327Server.update();
   gpsReceiver.update();
   gpsWebServer.loop();
+
+  // Push the latest GPS snapshot onto the CAN bus (rate-limited internally
+  // per elm327.dbc GenMsgCycleTime); no-op while CAN is disabled.
+  canManager.updateAndTransmit(gps);
+
   delay(2);
 }
