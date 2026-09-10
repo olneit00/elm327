@@ -24,9 +24,9 @@ constexpr int I2C_SCL_PIN = 22;  // I2C Clock (ESP32 default SCL)
 constexpr int RADIO_RST_PIN = 4;   // Hardware reset (active LOW)
 constexpr int RADIO_SEN_PIN = -1;  // Not connected (tied to 3.3V on breakout)
 
-// --- CAN bus (for future GALA integration) ---
-constexpr int CAN_TX_PIN = 25;  // TWAI TX
-constexpr int CAN_RX_PIN = 26;  // TWAI RX
+// --- CAN bus (GPS from motor-node, see CanBusReceiver / issue #15) ---
+constexpr int CAN_TX_PIN = 25;  // TWAI TX -> transceiver D (driver input)
+constexpr int CAN_RX_PIN = 26;  // TWAI RX <- transceiver RX (receiver output)
 
 // --- Panel geometry ---
 constexpr uint16_t SCREEN_WIDTH = 240;

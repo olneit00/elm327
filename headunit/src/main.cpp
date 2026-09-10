@@ -3,11 +3,13 @@
 #include <LittleFS.h>
 #include <ESPmDNS.h>
 
+#include "CanBusReceiver.h"
 #include "display/DisplayManager.h"
 #include "hardware/Pins.h"
 #include "time/TimeProvider.h"
 #include "time/SystemClock.h"
 #include "ui/ClockScreen.h"
+#include "ui/GpsScreen.h"
 #include "ui/RadioScreen.h"
 #include "radio/RadioService.h"
 #include "radio/RadioStore.h"
@@ -29,9 +31,13 @@ MillisClock timeSource(TimeOfDay{12, 0, 0});
 
 ClockScreen clockScreen;
 RadioScreen radioScreen;
+GpsScreen gpsScreen;
 RadioService radioService;
 RadioStore radioStore;
 WifiManager wifiManager;
+// GPS over CAN bus (issue #15); pins/bitrate must match motor-node's
+// CanManager and elm327.dbc.
+CanBusReceiver canBusReceiver(pins::CAN_TX_PIN, pins::CAN_RX_PIN, 500000);
 // Tracks the best-known wall-clock date/time for GET /api/time (issue #9),
 // independent of `timeSource` above (which only drives the LVGL clock
 // hands and has no concept of a date). See time/SystemClock.h for the
@@ -71,14 +77,15 @@ size_t lastSavedStationCount = 0;
 bool stationsEverSaved = false;
 
 // Screen switching state
-bool showRadioScreen = false;
+enum class ActiveScreen { Clock, Radio, Gps };
+ActiveScreen activeScreen = ActiveScreen::Clock;
 uint32_t lastScreenSwitchMs = 0;
 
 // RadioService callbacks for WebServer
 void onRadioStatus(const RadioStatus& status) {
     webServer.broadcastStatus(status);
     // Update RadioScreen if visible
-    if (showRadioScreen) {
+    if (activeScreen == ActiveScreen::Radio) {
         radioScreen.update(status);
     }
 }
@@ -177,6 +184,17 @@ void setup() {
   radioScreen.create();
   LOG.println(F("[RADIO] Screen created"));
 
+  // Create GpsScreen (issue #15)
+  gpsScreen.create();
+  LOG.println(F("[GPS] Screen created"));
+
+  // CAN bus is optional hardware (transceiver may not be wired yet); a
+  // failed begin() just disables poll()/UI updates below instead of
+  // blocking the rest of setup(), mirroring motor-node's CanManager.
+  if (!canBusReceiver.begin()) {
+    LOG.println(F("[CAN] disabled (init failed)"));
+  }
+
   // Initialize Radio
   LOG.println(F("[RADIO] Initializing Si4703..."));
   if (radioService.begin()) {
@@ -271,6 +289,16 @@ void loop() {
   clockScreen.update();  // move hands from the running virtual clock
   DisplayManager::tick();
 
+  // Drain CAN frames and refresh the GPS screen (issue #15). poll() is a
+  // no-op while CAN is disabled; update() itself is a no-op while the
+  // screen isn't visible.
+  canBusReceiver.poll();
+  static uint32_t lastGpsUiMs = 0;
+  if (millis() - lastGpsUiMs > 2000) {
+    lastGpsUiMs = millis();
+    gpsScreen.update(canBusReceiver.getLatestGpsData());
+  }
+
   // Radio service loop
   if (radioInitialized) {
     radioService.loop();
@@ -346,19 +374,21 @@ void loop() {
   }
 
 #if ENABLE_DEMO_SEQUENCES
-  // Screen switching test: toggle between clock and radio every 15 seconds (demo mode only)
+  // Screen switching test: cycle Clock -> Radio -> Gps every 15 seconds (demo mode only)
   if (millis() - lastScreenSwitchMs > 15000) {
     lastScreenSwitchMs = millis();
-    showRadioScreen = !showRadioScreen;
-    if (showRadioScreen) {
-      clockScreen.setVisible(false);
-      radioScreen.setVisible(true);
-      LOG.println(F("[SCREEN] Switched to RadioScreen"));
-    } else {
-      radioScreen.setVisible(false);
-      clockScreen.setVisible(true);
-      LOG.println(F("[SCREEN] Switched to ClockScreen"));
+    switch (activeScreen) {
+      case ActiveScreen::Clock: activeScreen = ActiveScreen::Radio; break;
+      case ActiveScreen::Radio: activeScreen = ActiveScreen::Gps; break;
+      case ActiveScreen::Gps: activeScreen = ActiveScreen::Clock; break;
     }
+    clockScreen.setVisible(activeScreen == ActiveScreen::Clock);
+    radioScreen.setVisible(activeScreen == ActiveScreen::Radio);
+    gpsScreen.setVisible(activeScreen == ActiveScreen::Gps);
+    LOG.printf("[SCREEN] Switched to %s\n",
+               activeScreen == ActiveScreen::Clock   ? "ClockScreen"
+               : activeScreen == ActiveScreen::Radio ? "RadioScreen"
+                                                      : "GpsScreen");
   }
 #endif
 
